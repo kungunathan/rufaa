@@ -1,0 +1,161 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    background-color: #f5f5f5;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+}
+
+.register-container {
+    background-color: white;
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    width: 100%;
+    max-width: 480px;
+    padding: 40px 30px;
+}
+
+.register-header {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+.logo {
+    font-size: 32px;
+    font-weight: bold;
+    color: #2c3e50;
+    margin-bottom: 10px;
+}
+
+.register-title {
+    font-size: 24px;
+    color: #2c3e50;
+    margin-bottom: 5px;
+}
+
+.register-subtitle {
+    color: #7f8c8d;
+    font-size: 16px;
+    margin-bottom: 25px;
+}
+
+.form-section {
+    padding-bottom: 20px;   
+}
+
+.form-section:last-of-type {
+    border-bottom: none;
+}
+
+.form-row {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.form-group {
+    flex: 1;
+}
+
+.form-label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+    color: #2c3e50;
+}
+
+.form-input {
+    width: 100%;
+    padding: 12px 15px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 16px;
+    transition: border-color 0.3s;
+}
+
+.form-input:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+}
+
+.checkbox-group {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 25px;
+}
+
+.checkbox-input {
+    margin-right: 10px;
+    margin-top: 3px;
+    width: 18px;
+    height: 18px;
+}
+
+.checkbox-label {
+    color: #2c3e50;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.terms-link {
+    color: #3498db;
+    text-decoration: none;
+}
+
+.terms-link:hover {
+    text-decoration: underline;
+}
+
+.create-account-button {
+    width: 100%;
+    padding: 12px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.3s;
+    margin-bottom: 25px;
+}
+
+.create-account-button:hover {
+    background-color: #2980b9;
+}
+
+.login-section {
+    text-align: center;
+    color: #7f8c8d;
+    font-size: 14px;
+}
+
+.login-link {
+    color: #3498db;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.login-link:hover {
+    text-decoration: underline;
+}
+
+@media (max-width: 480px) {
+    .register-container {
+        padding: 30px 20px;
+    }
+    
+    .form-row {
+        flex-direction: column;
+        gap: 0;
+    }
+}
