@@ -81,7 +81,7 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rufaa - Login</title>
-    <link rel="stylesheet" href="styles/login/loginStyle.css">
+    <link rel="stylesheet" href="styles/login/login.css">
 </head>
 <body>
     <div class="login-container">
