@@ -23,224 +23,93 @@ if ($user_stmt->rowCount() === 0) {
     exit();
 }
 
-// Handle referral actions
-if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    if (isset($_POST['action'])) {
-        $referral_id = filter_input(INPUT_POST, 'referral_id', FILTER_VALIDATE_INT);
-        $action = $_POST['action'];
-        $feedback = trim($_POST['feedback'] ?? '');
-        
-        if ($referral_id && in_array($action, ['accept', 'deny'])) {
-            try {
-                if ($action === 'accept') {
-                    $stmt = $pdo->prepare("UPDATE referrals SET status = 'accepted', responded_at = NOW() WHERE id = ? AND receiving_user_id = ? AND status = 'pending'");
-                    $stmt->execute([$referral_id, $user_id]);
-                    
-                    // Create alert for the sender
-                    $referral_info = $pdo->prepare("SELECT r.user_id as sender_id, r.referral_code FROM referrals r WHERE r.id = ?");
-                    $referral_info->execute([$referral_id]);
-                    $ref_data = $referral_info->fetch(PDO::FETCH_ASSOC);
-                    
-                    if ($ref_data) {
-                        $alert_message = "Your referral " . $ref_data['referral_code'] . " has been accepted by " . $user_name;
-                        $alert_stmt = $pdo->prepare("INSERT INTO alerts (user_id, message, alert_type) VALUES (?, ?, 'info')");
-                        $alert_stmt->execute([$ref_data['sender_id'], $alert_message]);
-                    }
-                    
-                } elseif ($action === 'deny') {
-                    $stmt = $pdo->prepare("UPDATE referrals SET status = 'declined', responded_at = NOW(), feedback = ? WHERE id = ? AND receiving_user_id = ? AND status = 'pending'");
-                    $stmt->execute([$feedback, $referral_id, $user_id]);
-                    
-                    // Create alert for the sender
-                    $referral_info = $pdo->prepare("SELECT r.user_id as sender_id, r.referral_code FROM referrals r WHERE r.id = ?");
-                    $referral_info->execute([$referral_id]);
-                    $ref_data = $referral_info->fetch(PDO::FETCH_ASSOC);
-                    
-                    if ($ref_data) {
-                        $alert_message = "Your referral " . $ref_data['referral_code'] . " has been declined by " . $user_name . ". Feedback: " . $feedback;
-                        $alert_stmt = $pdo->prepare("INSERT INTO alerts (user_id, message, alert_type) VALUES (?, ?, 'warning')");
-                        $alert_stmt->execute([$ref_data['sender_id'], $alert_message]);
-                    }
-                }
-                
-                $_SESSION['success_message'] = "Referral " . $action . "ed successfully.";
-            } catch (PDOException $e) {
-                error_log("Referral action error: " . $e->getMessage());
-                $_SESSION['error_message'] = "Failed to process referral action.";
-            }
-        }
-        
-        header("Location: referrals.php");
-        exit();
+// Handle logout
+if (isset($_GET['logout'])) {
+    // Clear remember token from database
+    if (isset($_COOKIE['remember_token'])) {
+        $token = $_COOKIE['remember_token'];
+        $update_stmt = $pdo->prepare("UPDATE users SET remember_token = NULL WHERE id = ?");
+        $update_stmt->execute([$user_id]);
+        setcookie('remember_token', '', time() - 3600, "/");
     }
     
-    // Handle resend referral
-    if (isset($_POST['resend_referral'])) {
-        $original_referral_id = filter_input(INPUT_POST, 'original_referral_id', FILTER_VALIDATE_INT);
-        $new_receiving_user_id = filter_input(INPUT_POST, 'new_receiving_user_id', FILTER_VALIDATE_INT);
-        
-        if ($original_referral_id && $new_receiving_user_id) {
-            try {
-                // Get original referral data
-                $original_stmt = $pdo->prepare("SELECT * FROM referrals WHERE id = ? AND user_id = ?");
-                $original_stmt->execute([$original_referral_id, $user_id]);
-                $original_referral = $original_stmt->fetch(PDO::FETCH_ASSOC);
-                
-                if ($original_referral) {
-                    // Generate new referral code
-                    $new_referral_code = "REF" . date('ymd') . strtoupper(bin2hex(random_bytes(3)));
-                    
-                    // Create new referral
-                    $resend_stmt = $pdo->prepare("INSERT INTO referrals (
-                        user_id, referral_code, condition_description, type, patient_id, patient_name, 
-                        patient_age, patient_gender, symptoms, medical_history, current_medications, 
-                        referring_doctor, referring_facility, receiving_user_id, specialty, 
-                        urgency_level, additional_notes, status, original_referral_id
-                    ) VALUES (?, ?, ?, 'outgoing', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)");
-                    
-                    $resend_stmt->execute([
-                        $user_id, $new_referral_code, $original_referral['condition_description'],
-                        $original_referral['patient_id'], $original_referral['patient_name'],
-                        $original_referral['patient_age'], $original_referral['patient_gender'],
-                        $original_referral['symptoms'], $original_referral['medical_history'],
-                        $original_referral['current_medications'], $original_referral['referring_doctor'],
-                        $original_referral['referring_facility'], $new_receiving_user_id,
-                        $original_referral['specialty'], $original_referral['urgency_level'],
-                        $original_referral['additional_notes'], $original_referral_id
-                    ]);
-                    
-                    // Create alert for new receiving user
-                    $alert_message = "New referral received from " . $user_name . " - " . $original_referral['condition_description'];
-                    $alert_stmt = $pdo->prepare("INSERT INTO alerts (user_id, message, alert_type) VALUES (?, ?, 'urgent')");
-                    $alert_stmt->execute([$new_receiving_user_id, $alert_message]);
-                    
-                    $_SESSION['success_message'] = "Referral resent successfully.";
-                }
-            } catch (PDOException $e) {
-                error_log("Resend referral error: " . $e->getMessage());
-                $_SESSION['error_message'] = "Failed to resend referral.";
-            }
-        }
-        
-        header("Location: referrals.php");
-        exit();
-    }
-    
-    // Handle edit referral
-    if (isset($_POST['edit_referral'])) {
-        $referral_id = filter_input(INPUT_POST, 'referral_id', FILTER_VALIDATE_INT);
-        $patient_id = trim($_POST['patient_id']);
-        $patient_name = trim($_POST['patient_name']);
-        $patient_age = filter_input(INPUT_POST, 'patient_age', FILTER_VALIDATE_INT);
-        $patient_gender = $_POST['patient_gender'];
-        $condition = trim($_POST['condition']);
-        $symptoms = trim($_POST['symptoms']);
-        $medical_history = trim($_POST['medical_history']);
-        $current_medications = trim($_POST['current_medications']);
-        $referring_doctor = trim($_POST['referring_doctor']);
-        $referring_facility = trim($_POST['referring_facility']);
-        $specialty = trim($_POST['specialty']);
-        $urgency_level = $_POST['urgency_level'];
-        $additional_notes = trim($_POST['additional_notes']);
-        
-        if ($referral_id && $patient_id && $patient_name && $patient_age && $patient_gender && $condition && $referring_doctor && $referring_facility && $specialty && $urgency_level) {
-            try {
-                $update_stmt = $pdo->prepare("UPDATE referrals SET 
-                    patient_id = ?, patient_name = ?, patient_age = ?, patient_gender = ?, 
-                    condition_description = ?, symptoms = ?, medical_history = ?, 
-                    current_medications = ?, referring_doctor = ?, referring_facility = ?, 
-                    specialty = ?, urgency_level = ?, additional_notes = ? 
-                    WHERE id = ? AND user_id = ? AND status = 'declined'");
-                
-                if ($update_stmt->execute([
-                    $patient_id, $patient_name, $patient_age, $patient_gender, $condition, 
-                    $symptoms, $medical_history, $current_medications, $referring_doctor, 
-                    $referring_facility, $specialty, $urgency_level, $additional_notes, 
-                    $referral_id, $user_id
-                ])) {
-                    $_SESSION['success_message'] = "Referral updated successfully.";
-                }
-            } catch (PDOException $e) {
-                error_log("Edit referral error: " . $e->getMessage());
-                $_SESSION['error_message'] = "Failed to update referral.";
-            }
-        }
-        
-        header("Location: referrals.php");
-        exit();
-    }
+    // Clear session
+    session_destroy();
+    header("Location: login.php");
+    exit();
 }
 
-// Fetch data for the page
+// Fetch data
 try {
-    // Fetch user alerts count
     $alert_stmt = $pdo->prepare("SELECT COUNT(*) as alert_count FROM alerts WHERE user_id = ? AND is_read = 0");
     $alert_stmt->execute([$user_id]);
     $alert_data = $alert_stmt->fetch(PDO::FETCH_ASSOC);
     $alert_count = $alert_data['alert_count'] ?? 0;
 
-    // Fetch incoming referrals (pending acceptance)
-    $incoming_stmt = $pdo->prepare("
-        SELECT r.*, u.first_name as sender_first_name, u.last_name as sender_last_name 
-        FROM referrals r 
-        JOIN users u ON r.user_id = u.id 
-        WHERE r.receiving_user_id = ? AND r.status = 'pending' 
-        ORDER BY 
-            CASE r.urgency_level 
-                WHEN 'emergency' THEN 1 
-                WHEN 'urgent' THEN 2 
-                WHEN 'routine' THEN 3 
-            END,
-            r.created_at DESC
-    ");
-    $incoming_stmt->execute([$user_id]);
-    $incoming_referrals = $incoming_stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Fetch outgoing referrals (sent by current user)
-    $outgoing_stmt = $pdo->prepare("
-        SELECT r.*, u.first_name as receiver_first_name, u.last_name as receiver_last_name 
-        FROM referrals r 
-        JOIN users u ON r.receiving_user_id = u.id 
-        WHERE r.user_id = ? 
-        ORDER BY r.created_at DESC
-    ");
-    $outgoing_stmt->execute([$user_id]);
-    $outgoing_referrals = $outgoing_stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Fetch all active users for resending declined referrals
-    $users_stmt = $pdo->prepare("SELECT id, first_name, last_name, email FROM users WHERE id != ? AND is_active = 1");
-    $users_stmt->execute([$user_id]);
-    $available_users = $users_stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Calculate stats
-    $total_referrals = count($outgoing_referrals);
-    $pending_incoming = count($incoming_referrals);
-    $accepted_referrals = array_filter($outgoing_referrals, function($ref) { return $ref['status'] === 'accepted'; });
-    $declined_referrals = array_filter($outgoing_referrals, function($ref) { return $ref['status'] === 'declined'; });
-
 } catch (PDOException $e) {
-    error_log("Referrals data fetch error: " . $e->getMessage());
+    error_log("Report issue data fetch error: " . $e->getMessage());
     $alert_count = 0;
-    $incoming_referrals = [];
-    $outgoing_referrals = [];
-    $available_users = [];
-    $total_referrals = 0;
-    $pending_incoming = 0;
-    $accepted_referrals = [];
-    $declined_referrals = [];
 }
 
-// Check for messages
-$success_message = $_SESSION['success_message'] ?? '';
-$error_message = $_SESSION['error_message'] ?? '';
-unset($_SESSION['success_message'], $_SESSION['error_message']);
+$error = "";
+$success = "";
+
+if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    $issue_type = $_POST['issue_type'];
+    $related_module = $_POST['related_module'];
+    $issue_title = trim($_POST['issue_title']);
+    $issue_description = trim($_POST['issue_description']);
+    $priority_level = $_POST['priority_level'];
+    $impact_description = trim($_POST['impact_description']);
+    $follow_up = isset($_POST['follow_up']) ? 1 : 0;
+
+    // Validate required fields
+    if (empty($issue_type) || empty($issue_title) || empty($issue_description) || empty($priority_level)) {
+        $error = "Please fill in all required fields.";
+    } else {
+        try {
+            // Insert issue report
+            $stmt = $pdo->prepare("INSERT INTO issue_reports (
+                user_id, issue_type, related_module, issue_title, issue_description,
+                priority_level, impact_description, follow_up, reporter_name,
+                reporter_email, status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')");
+            
+            // Get user email for reporter information
+            $user_email_stmt = $pdo->prepare("SELECT email FROM users WHERE id = ?");
+            $user_email_stmt->execute([$user_id]);
+            $user_email = $user_email_stmt->fetch(PDO::FETCH_ASSOC)['email'];
+            
+            if ($stmt->execute([
+                $user_id, $issue_type, $related_module, $issue_title, $issue_description,
+                $priority_level, $impact_description, $follow_up, $user_name, $user_email
+            ])) {
+                $success = "Issue reported successfully! Your report has been submitted and will be reviewed by our team. Reference ID: #" . $pdo->lastInsertId();
+                
+                // Create alert for admin users about new issue report
+                $alert_message = "New issue report submitted: " . $issue_title . " (Priority: " . $priority_level . ")";
+                $admin_alert_stmt = $pdo->prepare("INSERT INTO alerts (user_id, message, alert_type) 
+                                                 SELECT id, ?, 'warning' FROM users WHERE role IN ('admin', 'super_admin') AND is_active = 1");
+                $admin_alert_stmt->execute([$alert_message]);
+                
+                // Clear form data
+                $_POST = array();
+            } else {
+                $error = "Failed to submit issue report. Please try again.";
+            }
+        } catch (PDOException $e) {
+            error_log("Issue report submission error: " . $e->getMessage());
+            $error = "Database error occurred. Please try again.";
+        }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Rufaa - Referrals Dashboard</title>
+    <title>Rufaa - Report Issue</title>
     <style>
         * {
             margin: 0;
@@ -388,181 +257,55 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
             border: 1px solid #f5c6cb;
         }
 
-        /* Stats Grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 20px;
+        /* Form Container */
+        .issue-form-container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
             margin-bottom: 30px;
         }
 
-        .stat-card {
-            background: white;
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-            transition: transform 0.3s ease;
+        .form-section {
+            margin-bottom: 40px;
+            padding-bottom: 30px;
+            border-bottom: 2px solid #f1f1f1;
         }
 
-        .stat-card:hover {
-            transform: translateY(-3px);
-        }
-
-        .stat-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 10px;
-        }
-
-        .stat-value {
-            font-size: 32px;
-            font-weight: bold;
-            color: #2c3e50;
-        }
-
-        .stat-label {
-            color: #7f8c8d;
-            font-size: 14px;
-        }
-
-        .stat-icon {
-            font-size: 24px;
-        }
-
-        /* Section Styles */
-        .section {
-            background: white;
-            padding: 25px;
-            border-radius: 12px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
-            margin-bottom: 25px;
-            transition: transform 0.3s ease;
-        }
-
-        .section:hover {
-            transform: translateY(-2px);
+        .form-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
         }
 
         .section-title {
             font-size: 20px;
             color: #2c3e50;
-            margin-bottom: 20px;
+            margin-bottom: 25px;
             padding-bottom: 15px;
             border-bottom: 2px solid #f1f1f1;
             font-weight: 600;
         }
 
-        /* Table Styles */
-        .referrals-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
-            background: white;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-        }
-
-        .referrals-table th {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 15px;
-            text-align: left;
-            font-weight: 600;
+        .section-subtitle {
+            color: #666;
             font-size: 14px;
-        }
-
-        .referrals-table td {
-            padding: 15px;
-            border-bottom: 1px solid #ecf0f1;
-            font-size: 14px;
-        }
-
-        .referrals-table tr:hover {
-            background-color: #f8f9fa;
-        }
-
-        .referrals-table tr:last-child td {
-            border-bottom: none;
-        }
-
-        /* Action Buttons */
-        .action-btn {
-            padding: 8px 16px;
-            margin: 2px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 12px;
-            font-weight: 500;
-            text-decoration: none;
-            display: inline-block;
-            transition: all 0.3s ease;
-            min-width: 70px;
-        }
-
-        .action-btn:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
-        }
-
-        .view-btn { background: #17a2b8; color: white; }
-        .edit-btn { background: #ffc107; color: black; }
-        .resend-btn { background: #28a745; color: white; }
-        .accept-btn { background: #28a745; color: white; }
-        .deny-btn { background: #dc3545; color: white; }
-        .confirm-deny-btn { background: #dc3545; color: white; }
-        .confirm-edit-btn { background: #007bff; color: white; }
-        .confirm-resend-btn { background: #28a745; color: white; }
-
-        /* Status Badges */
-        .status-badge {
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: bold;
-            display: inline-block;
-        }
-
-        .status-pending { background: #fff3cd; color: #856404; }
-        .status-accepted { background: #d4edda; color: #155724; }
-        .status-declined { background: #f8d7da; color: #721c24; }
-
-        /* Urgency Indicators */
-        .urgency-indicator {
-            display: inline-block;
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            margin-right: 8px;
-        }
-
-        .urgency-routine { background: #28a745; }
-        .urgency-urgent { background: #ffc107; }
-        .urgency-emergency { background: #dc3545; animation: blink 1s infinite; }
-
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+            margin-bottom: 20px;
+            line-height: 1.5;
         }
 
         /* Form Styles */
-        .edit-form {
-            display: none;
-            background: #f8f9fa;
-            padding: 25px;
-            border-radius: 8px;
-            margin-top: 15px;
-            border-left: 4px solid #007bff;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        }
-
-        .edit-form .form-group {
+        .form-row {
+            display: flex;
+            gap: 25px;
             margin-bottom: 20px;
         }
 
-        .edit-form label {
+        .form-group {
+            flex: 1;
+        }
+
+        .form-label {
             display: block;
             margin-bottom: 8px;
             font-weight: 600;
@@ -570,91 +313,123 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
             font-size: 14px;
         }
 
-        .edit-form input,
-        .edit-form select,
-        .edit-form textarea {
+        .required::after {
+            content: " *";
+            color: #e74c3c;
+        }
+
+        .form-input, .form-select, .form-textarea {
             width: 100%;
             padding: 12px;
             border: 2px solid #e1e5e9;
             border-radius: 6px;
             font-size: 14px;
-            transition: border-color 0.3s ease;
+            transition: all 0.3s ease;
         }
 
-        .edit-form input:focus,
-        .edit-form select:focus,
-        .edit-form textarea:focus {
+        .form-input:focus, .form-select:focus, .form-textarea:focus {
             outline: none;
             border-color: #667eea;
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
 
-        .edit-form .form-row {
-            display: flex;
-            gap: 20px;
-            margin-bottom: 20px;
+        .form-input::placeholder, .form-textarea::placeholder {
+            color: #999;
         }
 
-        .edit-form .form-row .form-group {
-            flex: 1;
-            margin-bottom: 0;
-        }
-
-        /* View Details */
-        .view-details {
-            display: none;
-            background: #f8f9fa;
-            padding: 25px;
-            border-radius: 8px;
-            margin-top: 15px;
-            border-left: 4px solid #28a745;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        }
-
-        .detail-row {
-            display: flex;
-            margin-bottom: 15px;
-            padding: 10px 0;
-            border-bottom: 1px solid #e9ecef;
-        }
-
-        .detail-label {
-            font-weight: 600;
-            width: 200px;
-            color: #333;
-            flex-shrink: 0;
-            font-size: 14px;
-        }
-
-        .detail-value {
-            flex: 1;
-            color: #666;
-            font-size: 14px;
+        .form-textarea {
+            min-height: 120px;
+            resize: vertical;
             line-height: 1.5;
         }
 
-        .action-links {
-            margin-top: 25px;
-            padding-top: 20px;
-            border-top: 2px solid #e9ecef;
+        /* Priority Level Styles */
+        .priority-options {
+            display: flex;
+            gap: 15px;
+            margin-top: 10px;
+        }
+
+        .priority-option {
+            flex: 1;
             text-align: center;
+            padding: 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
         }
 
-        .action-links .action-btn {
-            margin: 0 10px;
-            padding: 10px 20px;
-            min-width: 120px;
+        .priority-option:hover {
+            border-color: #667eea;
+            background-color: #f8f9fa;
         }
 
-        /* Main Action Buttons */
+        .priority-option.selected {
+            color: white;
+            border-color: transparent;
+        }
+
+        .priority-low.selected {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        }
+
+        .priority-medium.selected {
+            background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);
+        }
+
+        .priority-high.selected {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+        }
+
+        .priority-critical.selected {
+            background: linear-gradient(135deg, #6f42c1 0%, #e83e8c 100%);
+            animation: critical-pulse 2s infinite;
+        }
+
+        @keyframes critical-pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+            100% { transform: scale(1); }
+        }
+
+        /* Checkbox Styles */
+        .checkbox-group {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+        }
+
+        .checkbox-input {
+            margin-top: 3px;
+            width: 18px;
+            height: 18px;
+        }
+
+        .checkbox-label {
+            color: #2c3e50;
+            font-size: 14px;
+            line-height: 1.5;
+            font-weight: 500;
+        }
+
+        /* Action Buttons */
         .action-buttons {
+            display: flex;
+            gap: 15px;
             margin-top: 30px;
-            text-align: center;
+            padding-top: 25px;
+            border-top: 2px solid #f1f1f1;
         }
 
         .btn {
             padding: 14px 28px;
-            margin: 0 12px;
             border: none;
             border-radius: 8px;
             font-size: 16px;
@@ -665,7 +440,7 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
             align-items: center;
             justify-content: center;
             transition: all 0.3s ease;
-            min-width: 180px;
+            min-width: 150px;
         }
 
         .btn-primary {
@@ -678,48 +453,62 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
             box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
         }
 
-        .btn-outline {
+        .btn-primary:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
             background: transparent;
             color: #7f8c8d;
             border: 2px solid #bdc3c7;
         }
 
-        .btn-outline:hover {
+        .btn-secondary:hover {
             background-color: #f8f9fa;
             transform: translateY(-2px);
         }
 
-        /* Empty State */
-        .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            color: #7f8c8d;
+        /* Field Error Styles */
+        .field-error {
+            color: #e74c3c;
+            font-size: 12px;
+            margin-top: 5px;
+            display: none;
         }
 
-        .empty-state i {
-            font-size: 48px;
-            margin-bottom: 15px;
-            opacity: 0.5;
+        .input-error {
+            border-color: #e74c3c !important;
+        }
+
+        .input-success {
+            border-color: #27ae60 !important;
+        }
+
+        /* Info Box */
+        .info-box {
+            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
+            border: 1px solid #90caf9;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 25px;
+        }
+
+        .info-title {
+            font-weight: 600;
+            color: #1565c0;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+
+        .info-content {
+            color: #1976d2;
+            font-size: 14px;
+            line-height: 1.5;
         }
 
         /* Responsive Design */
-        @media (max-width: 1200px) {
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-        }
-
-        @media (max-width: 992px) {
-            .stats-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .edit-form .form-row {
-                flex-direction: column;
-                gap: 0;
-            }
-        }
-
         @media (max-width: 768px) {
             .sidebar {
                 width: 70px;
@@ -745,30 +534,22 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                 gap: 15px;
             }
             
-            .referrals-table {
-                display: block;
-                overflow-x: auto;
-            }
-            
-            .detail-row {
+            .form-row {
                 flex-direction: column;
+                gap: 0;
             }
             
-            .detail-label {
-                width: 100%;
-                margin-bottom: 5px;
+            .priority-options {
+                flex-direction: column;
             }
             
             .action-buttons {
-                display: flex;
                 flex-direction: column;
-                gap: 15px;
             }
             
             .btn {
                 min-width: auto;
                 width: 100%;
-                margin: 0;
             }
         }
 
@@ -777,19 +558,21 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                 padding: 15px;
             }
             
-            .section {
+            .issue-form-container {
                 padding: 20px;
             }
             
-            .action-links {
-                display: flex;
-                flex-direction: column;
-                gap: 10px;
+            .form-section {
+                margin-bottom: 30px;
+                padding-bottom: 20px;
             }
             
-            .action-links .action-btn {
-                margin: 0;
-                width: 100%;
+            .checkbox-group {
+                padding: 15px;
+            }
+            
+            .info-box {
+                padding: 15px;
             }
         }
     </style>
@@ -806,7 +589,7 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="referrals.php" class="nav-link active">
+                    <a href="referrals.php" class="nav-link">
                         <span>Referrals</span>
                     </a>
                 </li>
@@ -821,7 +604,7 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                     </a>
                 </li>
                 <li class="nav-item">
-                    <a href="report_issue.php" class="nav-link">
+                    <a href="report_issue.php" class="nav-link active">
                         <span>Report Issue</span>
                     </a>
                 </li>
@@ -837,7 +620,7 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
         <div class="main-content">
             <!-- Page Header -->
             <div class="page-header">
-                <h1 class="page-title">Referrals Dashboard</h1>
+                <h1 class="page-title">Report an Issue</h1>
                 <div class="user-info">
                     <span>Welcome, <?php echo htmlspecialchars($user_name); ?></span>
                     <?php if ($alert_count > 0): ?>
@@ -847,433 +630,236 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
             </div>
 
             <!-- Messages -->
-            <?php if ($success_message): ?>
-                <div class="message success-message"><?php echo htmlspecialchars($success_message); ?></div>
-            <?php endif; ?>
-            
-            <?php if ($error_message): ?>
-                <div class="message error-message"><?php echo htmlspecialchars($error_message); ?></div>
+            <?php if (!empty($error)): ?>
+                <div class="message error-message"><?php echo htmlspecialchars($error); ?></div>
             <?php endif; ?>
 
-            <!-- Stats Grid -->
-            <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div>
-                            <div class="stat-value"><?php echo $total_referrals; ?></div>
-                            <div class="stat-label">Total Referrals Sent</div>
-                        </div>
-                        <div class="stat-icon">📤</div>
-                    </div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div>
-                            <div class="stat-value"><?php echo count($accepted_referrals); ?></div>
-                            <div class="stat-label">Accepted</div>
-                        </div>
-                        <div class="stat-icon">✅</div>
-                    </div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div>
-                            <div class="stat-value"><?php echo count($declined_referrals); ?></div>
-                            <div class="stat-label">Declined</div>
-                        </div>
-                        <div class="stat-icon">❌</div>
-                    </div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-header">
-                        <div>
-                            <div class="stat-value"><?php echo $pending_incoming; ?></div>
-                            <div class="stat-label">Pending Incoming</div>
-                        </div>
-                        <div class="stat-icon">⏳</div>
-                    </div>
-                </div>
-            </div>
+            <?php if (!empty($success)): ?>
+                <div class="message success-message"><?php echo htmlspecialchars($success); ?></div>
+            <?php endif; ?>
 
-            <!-- Incoming Referrals Section -->
-            <div class="section">
-                <h3 class="section-title">Incoming Referrals - Awaiting Your Response</h3>
-                <?php if (count($incoming_referrals) > 0): ?>
-                    <table class="referrals-table">
-                        <thead>
-                            <tr>
-                                <th>Referral Code</th>
-                                <th>From</th>
-                                <th>Patient</th>
-                                <th>Condition</th>
-                                <th>Urgency</th>
-                                <th>Received</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($incoming_referrals as $referral): ?>
-                                <tr>
-                                    <td class="referral-id"><?php echo htmlspecialchars($referral['referral_code']); ?></td>
-                                    <td><?php echo htmlspecialchars($referral['sender_first_name'] . ' ' . $referral['sender_last_name']); ?></td>
-                                    <td class="patient-name"><?php echo htmlspecialchars($referral['patient_name']); ?></td>
-                                    <td class="referral-condition"><?php echo htmlspecialchars($referral['condition_description']); ?></td>
-                                    <td>
-                                        <span class="urgency-indicator urgency-<?php echo $referral['urgency_level']; ?>"></span>
-                                        <?php echo ucfirst($referral['urgency_level']); ?>
-                                    </td>
-                                    <td><?php echo date('M j, Y g:i A', strtotime($referral['created_at'])); ?></td>
-                                    <td>
-                                        <button type="button" class="action-btn view-btn" onclick="toggleDetails('incoming-<?php echo $referral['id']; ?>')">View</button>
-                                        <form method="POST" style="display: inline;">
-                                            <input type="hidden" name="referral_id" value="<?php echo $referral['id']; ?>">
-                                            <button type="submit" name="action" value="accept" class="action-btn accept-btn" onclick="return confirm('Are you sure you want to accept this referral?')">Accept</button>
-                                        </form>
-                                        <button type="button" class="action-btn deny-btn" onclick="toggleForm('deny-form-<?php echo $referral['id']; ?>')">Deny</button>
-                                        
-                                        <!-- View Details -->
-                                        <div id="incoming-<?php echo $referral['id']; ?>" class="view-details">
-                                            <h4>Referral Details</h4>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Patient ID:</div>
-                                                <div class="detail-value"><?php echo htmlspecialchars($referral['patient_id']); ?></div>
-                                            </div>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Age:</div>
-                                                <div class="detail-value"><?php echo htmlspecialchars($referral['patient_age']); ?></div>
-                                            </div>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Gender:</div>
-                                                <div class="detail-value"><?php echo ucfirst($referral['patient_gender']); ?></div>
-                                            </div>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Symptoms:</div>
-                                                <div class="detail-value"><?php echo htmlspecialchars($referral['symptoms'] ?: 'Not specified'); ?></div>
-                                            </div>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Medical History:</div>
-                                                <div class="detail-value"><?php echo htmlspecialchars($referral['medical_history'] ?: 'Not specified'); ?></div>
-                                            </div>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Medications:</div>
-                                                <div class="detail-value"><?php echo htmlspecialchars($referral['current_medications'] ?: 'Not specified'); ?></div>
-                                            </div>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Additional Notes:</div>
-                                                <div class="detail-value"><?php echo htmlspecialchars($referral['additional_notes'] ?: 'None'); ?></div>
-                                            </div>
-                                            <div class="action-links">
-                                                <button type="button" class="action-btn" onclick="toggleDetails('incoming-<?php echo $referral['id']; ?>')">Close</button>
-                                            </div>
-                                        </div>
-                                        
-                                        <!-- Deny Form -->
-                                        <form method="POST" id="deny-form-<?php echo $referral['id']; ?>" class="edit-form">
-                                            <input type="hidden" name="referral_id" value="<?php echo $referral['id']; ?>">
-                                            <input type="hidden" name="action" value="deny">
-                                            <div class="form-group">
-                                                <label>Reason for Declining:</label>
-                                                <textarea name="feedback" placeholder="Please provide reason for declining this referral..." required style="width: 100%; height: 100px;"></textarea>
-                                            </div>
-                                            <div class="action-links">
-                                                <button type="submit" class="action-btn confirm-deny-btn" onclick="return confirm('Are you sure you want to decline this referral?')">Confirm Deny</button>
-                                                <button type="button" class="action-btn" onclick="toggleForm('deny-form-<?php echo $referral['id']; ?>')">Cancel</button>
-                                            </div>
-                                        </form>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                <?php else: ?>
-                    <div class="empty-state">
-                        <div>📭</div>
-                        <p>No incoming referrals awaiting your response.</p>
+            <!-- Issue Form Container -->
+            <div class="issue-form-container">
+                <div class="info-box">
+                    <div class="info-title">💡 Help Us Improve</div>
+                    <div class="info-content">
+                        Please provide detailed information about the issue you're experiencing. The more specific you are, the better we can help resolve it quickly. 
+                        Our support team will review your report and get back to you if follow-up is requested.
                     </div>
-                <?php endif; ?>
-            </div>
+                </div>
 
-            <!-- Outgoing Referrals Section -->
-            <div class="section">
-                <h3 class="section-title">Your Sent Referrals</h3>
-                <?php if (count($outgoing_referrals) > 0): ?>
-                    <table class="referrals-table">
-                        <thead>
-                            <tr>
-                                <th>Referral Code</th>
-                                <th>To</th>
-                                <th>Patient</th>
-                                <th>Condition</th>
-                                <th>Status</th>
-                                <th>Sent</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <?php foreach ($outgoing_referrals as $referral): ?>
-                                <tr>
-                                    <td class="referral-id"><?php echo htmlspecialchars($referral['referral_code']); ?></td>
-                                    <td><?php echo htmlspecialchars($referral['receiver_first_name'] . ' ' . $referral['receiver_last_name']); ?></td>
-                                    <td class="patient-name"><?php echo htmlspecialchars($referral['patient_name']); ?></td>
-                                    <td class="referral-condition"><?php echo htmlspecialchars($referral['condition_description']); ?></td>
-                                    <td>
-                                        <span class="status-badge status-<?php echo $referral['status']; ?>">
-                                            <?php echo ucfirst($referral['status']); ?>
-                                        </span>
-                                        <?php if ($referral['status'] === 'declined' && $referral['feedback']): ?>
-                                            <br><small style="color: #666; display: block; margin-top: 5px;">Reason: <?php echo htmlspecialchars($referral['feedback']); ?></small>
-                                        <?php endif; ?>
-                                    </td>
-                                    <td><?php echo date('M j, Y g:i A', strtotime($referral['created_at'])); ?></td>
-                                    <td>
-                                        <button type="button" class="action-btn view-btn" onclick="toggleDetails('outgoing-<?php echo $referral['id']; ?>')">View</button>
-                                        
-                                        <?php if ($referral['status'] === 'declined'): ?>
-                                            <button type="button" class="action-btn edit-btn" onclick="toggleForm('edit-form-<?php echo $referral['id']; ?>')">Edit</button>
-                                            <button type="button" class="action-btn resend-btn" onclick="toggleForm('resend-form-<?php echo $referral['id']; ?>')">Resend</button>
-                                        <?php endif; ?>
-                                        
-                                        <!-- View Details -->
-                                        <div id="outgoing-<?php echo $referral['id']; ?>" class="view-details">
-                                            <h4>Referral Details</h4>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Patient ID:</div>
-                                                <div class="detail-value"><?php echo htmlspecialchars($referral['patient_id']); ?></div>
-                                            </div>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Age:</div>
-                                                <div class="detail-value"><?php echo htmlspecialchars($referral['patient_age']); ?></div>
-                                            </div>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Gender:</div>
-                                                <div class="detail-value"><?php echo ucfirst($referral['patient_gender']); ?></div>
-                                            </div>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Symptoms:</div>
-                                                <div class="detail-value"><?php echo htmlspecialchars($referral['symptoms'] ?: 'Not specified'); ?></div>
-                                            </div>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Medical History:</div>
-                                                <div class="detail-value"><?php echo htmlspecialchars($referral['medical_history'] ?: 'Not specified'); ?></div>
-                                            </div>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Medications:</div>
-                                                <div class="detail-value"><?php echo htmlspecialchars($referral['current_medications'] ?: 'Not specified'); ?></div>
-                                            </div>
-                                            <div class="detail-row">
-                                                <div class="detail-label">Additional Notes:</div>
-                                                <div class="detail-value"><?php echo htmlspecialchars($referral['additional_notes'] ?: 'None'); ?></div>
-                                            </div>
-                                            <div class="action-links">
-                                                <button type="button" class="action-btn" onclick="toggleDetails('outgoing-<?php echo $referral['id']; ?>')">Close</button>
-                                                <?php if ($referral['status'] === 'declined'): ?>
-                                                    <button type="button" class="action-btn edit-btn" onclick="showEditForm(<?php echo $referral['id']; ?>)">Edit Referral</button>
-                                                    <button type="button" class="action-btn resend-btn" onclick="showResendForm(<?php echo $referral['id']; ?>)">Resend Referral</button>
-                                                <?php endif; ?>
-                                            </div>
-                                        </div>
-                                        
-                                        <!-- Edit Form -->
-                                        <form method="POST" id="edit-form-<?php echo $referral['id']; ?>" class="edit-form">
-                                            <input type="hidden" name="edit_referral" value="1">
-                                            <input type="hidden" name="referral_id" value="<?php echo $referral['id']; ?>">
-                                            
-                                            <div class="form-row">
-                                                <div class="form-group">
-                                                    <label>Patient ID *</label>
-                                                    <input type="text" name="patient_id" value="<?php echo htmlspecialchars($referral['patient_id']); ?>" required>
-                                                </div>
-                                                <div class="form-group">
-                                                    <label>Patient Name *</label>
-                                                    <input type="text" name="patient_name" value="<?php echo htmlspecialchars($referral['patient_name']); ?>" required>
-                                                </div>
-                                            </div>
-                                            
-                                            <div class="form-row">
-                                                <div class="form-group">
-                                                    <label>Age *</label>
-                                                    <input type="number" name="patient_age" value="<?php echo htmlspecialchars($referral['patient_age']); ?>" required>
-                                                </div>
-                                                <div class="form-group">
-                                                    <label>Gender *</label>
-                                                    <select name="patient_gender" required>
-                                                        <option value="male" <?php echo $referral['patient_gender'] == 'male' ? 'selected' : ''; ?>>Male</option>
-                                                        <option value="female" <?php echo $referral['patient_gender'] == 'female' ? 'selected' : ''; ?>>Female</option>
-                                                        <option value="other" <?php echo $referral['patient_gender'] == 'other' ? 'selected' : ''; ?>>Other</option>
-                                                    </select>
-                                                </div>
-                                            </div>
-                                            
-                                            <div class="form-group">
-                                                <label>Condition *</label>
-                                                <input type="text" name="condition" value="<?php echo htmlspecialchars($referral['condition_description']); ?>" required>
-                                            </div>
-                                            
-                                            <div class="form-group">
-                                                <label>Symptoms</label>
-                                                <textarea name="symptoms" placeholder="Describe symptoms"><?php echo htmlspecialchars($referral['symptoms']); ?></textarea>
-                                            </div>
-                                            
-                                            <div class="form-group">
-                                                <label>Medical History</label>
-                                                <textarea name="medical_history" placeholder="Relevant medical history"><?php echo htmlspecialchars($referral['medical_history']); ?></textarea>
-                                            </div>
-                                            
-                                            <div class="form-group">
-                                                <label>Current Medications</label>
-                                                <textarea name="current_medications" placeholder="List current medications"><?php echo htmlspecialchars($referral['current_medications']); ?></textarea>
-                                            </div>
-                                            
-                                            <div class="form-row">
-                                                <div class="form-group">
-                                                    <label>Referring Doctor *</label>
-                                                    <input type="text" name="referring_doctor" value="<?php echo htmlspecialchars($referral['referring_doctor']); ?>" required>
-                                                </div>
-                                                <div class="form-group">
-                                                    <label>Referring Facility *</label>
-                                                    <input type="text" name="referring_facility" value="<?php echo htmlspecialchars($referral['referring_facility']); ?>" required>
-                                                </div>
-                                            </div>
-                                            
-                                            <div class="form-group">
-                                                <label>Specialty *</label>
-                                                <select name="specialty" required>
-                                                    <option value="cardiology" <?php echo $referral['specialty'] == 'cardiology' ? 'selected' : ''; ?>>Cardiology</option>
-                                                    <option value="orthopedics" <?php echo $referral['specialty'] == 'orthopedics' ? 'selected' : ''; ?>>Orthopedics</option>
-                                                    <option value="neurology" <?php echo $referral['specialty'] == 'neurology' ? 'selected' : ''; ?>>Neurology</option>
-                                                    <option value="surgery" <?php echo $referral['specialty'] == 'surgery' ? 'selected' : ''; ?>>Surgery</option>
-                                                    <option value="internal" <?php echo $referral['specialty'] == 'internal' ? 'selected' : ''; ?>>Internal Medicine</option>
-                                                </select>
-                                            </div>
-                                            
-                                            <div class="form-group">
-                                                <label>Urgency Level *</label>
-                                                <select name="urgency_level" required>
-                                                    <option value="routine" <?php echo $referral['urgency_level'] == 'routine' ? 'selected' : ''; ?>>Routine</option>
-                                                    <option value="urgent" <?php echo $referral['urgency_level'] == 'urgent' ? 'selected' : ''; ?>>Urgent</option>
-                                                    <option value="emergency" <?php echo $referral['urgency_level'] == 'emergency' ? 'selected' : ''; ?>>Emergency</option>
-                                                </select>
-                                            </div>
-                                            
-                                            <div class="form-group">
-                                                <label>Additional Notes</label>
-                                                <textarea name="additional_notes" placeholder="Any additional information"><?php echo htmlspecialchars($referral['additional_notes']); ?></textarea>
-                                            </div>
-                                            
-                                            <div class="action-links">
-                                                <button type="submit" class="action-btn confirm-edit-btn">Save Changes</button>
-                                                <button type="button" class="action-btn" onclick="toggleForm('edit-form-<?php echo $referral['id']; ?>')">Cancel</button>
-                                            </div>
-                                        </form>
-                                        
-                                        <!-- Resend Form -->
-                                        <form method="POST" id="resend-form-<?php echo $referral['id']; ?>" class="edit-form">
-                                            <input type="hidden" name="resend_referral" value="1">
-                                            <input type="hidden" name="original_referral_id" value="<?php echo $referral['id']; ?>">
-                                            <div class="form-group">
-                                                <label>Select New Recipient *</label>
-                                                <select name="new_receiving_user_id" required>
-                                                    <option value="">Select new recipient</option>
-                                                    <?php foreach ($available_users as $user): ?>
-                                                        <option value="<?php echo $user['id']; ?>">
-                                                            <?php echo htmlspecialchars($user['first_name'] . ' ' . $user['last_name'] . ' (' . $user['email'] . ')'); ?>
-                                                        </option>
-                                                    <?php endforeach; ?>
-                                                </select>
-                                            </div>
-                                            <div class="action-links">
-                                                <button type="submit" class="action-btn confirm-resend-btn">Resend Referral</button>
-                                                <button type="button" class="action-btn" onclick="toggleForm('resend-form-<?php echo $referral['id']; ?>')">Cancel</button>
-                                            </div>
-                                        </form>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                <?php else: ?>
-                    <div class="empty-state">
-                        <div>📤</div>
-                        <p>You haven't sent any referrals yet.</p>
+                <form method="POST" action="<?php echo htmlspecialchars($_SERVER["PHP_SELF"]); ?>" id="issueForm">
+                    <!-- Issue Details Section -->
+                    <div class="form-section">
+                        <h2 class="section-title">Issue Details</h2>
+                        <p class="section-subtitle">
+                            Provide basic information about the issue you're reporting.
+                        </p>
+                        
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label required" for="issue_type">Issue Type</label>
+                                <select id="issue_type" name="issue_type" class="form-select" required onchange="validateField(this)">
+                                    <option value="">Select issue type</option>
+                                    <option value="technical" <?php echo (isset($_POST['issue_type']) && $_POST['issue_type'] == 'technical') ? 'selected' : ''; ?>>Technical Issue</option>
+                                    <option value="bug" <?php echo (isset($_POST['issue_type']) && $_POST['issue_type'] == 'bug') ? 'selected' : ''; ?>>Bug Report</option>
+                                    <option value="feature" <?php echo (isset($_POST['issue_type']) && $_POST['issue_type'] == 'feature') ? 'selected' : ''; ?>>Feature Request</option>
+                                    <option value="data" <?php echo (isset($_POST['issue_type']) && $_POST['issue_type'] == 'data') ? 'selected' : ''; ?>>Data Issue</option>
+                                    <option value="ui" <?php echo (isset($_POST['issue_type']) && $_POST['issue_type'] == 'ui') ? 'selected' : ''; ?>>User Interface</option>
+                                    <option value="performance" <?php echo (isset($_POST['issue_type']) && $_POST['issue_type'] == 'performance') ? 'selected' : ''; ?>>Performance</option>
+                                    <option value="other" <?php echo (isset($_POST['issue_type']) && $_POST['issue_type'] == 'other') ? 'selected' : ''; ?>>Other</option>
+                                </select>
+                                <div class="field-error">Please select an issue type</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="related_module">Related Module</label>
+                                <select id="related_module" name="related_module" class="form-select" onchange="validateField(this)">
+                                    <option value="">Select module (if applicable)</option>
+                                    <option value="referrals" <?php echo (isset($_POST['related_module']) && $_POST['related_module'] == 'referrals') ? 'selected' : ''; ?>>Referrals</option>
+                                    <option value="patients" <?php echo (isset($_POST['related_module']) && $_POST['related_module'] == 'patients') ? 'selected' : ''; ?>>Patients</option>
+                                    <option value="reports" <?php echo (isset($_POST['related_module']) && $_POST['related_module'] == 'reports') ? 'selected' : ''; ?>>Reports</option>
+                                    <option value="user" <?php echo (isset($_POST['related_module']) && $_POST['related_module'] == 'user') ? 'selected' : ''; ?>>User Management</option>
+                                    <option value="system" <?php echo (isset($_POST['related_module']) && $_POST['related_module'] == 'system') ? 'selected' : ''; ?>>System</option>
+                                </select>
+                                <div class="field-error"></div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label required" for="issue_title">Issue Title</label>
+                            <input type="text" id="issue_title" name="issue_title" class="form-input" 
+                                   placeholder="Brief, descriptive title of the issue" 
+                                   value="<?php echo htmlspecialchars($_POST['issue_title'] ?? ''); ?>" 
+                                   required
+                                   oninput="validateField(this)">
+                            <div class="field-error">Issue title is required</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label required" for="issue_description">Issue Description</label>
+                            <textarea id="issue_description" name="issue_description" class="form-textarea" 
+                                      placeholder="Please provide a detailed description of the issue. Include steps to reproduce, error messages, and what you expected to happen."
+                                      required
+                                      oninput="validateTextarea(this)"><?php echo htmlspecialchars($_POST['issue_description'] ?? ''); ?></textarea>
+                            <div class="field-error">Please provide a detailed description of the issue</div>
+                        </div>
                     </div>
-                <?php endif; ?>
-            </div>
 
-            <!-- Action Buttons -->
-            <div class="action-buttons">
-                <a href="write_referral.php" class="btn btn-primary">Write New Referral</a>
-                <a href="index.php" class="btn btn-outline">Back to Dashboard</a>
+                    <!-- Priority & Impact Section -->
+                    <div class="form-section">
+                        <h2 class="section-title">Priority & Impact</h2>
+                        <p class="section-subtitle">
+                            Help us understand the severity and impact of this issue.
+                        </p>
+
+                        <div class="form-group">
+                            <label class="form-label required">Priority Level</label>
+                            <div class="priority-options">
+                                <div class="priority-option priority-low <?php echo (isset($_POST['priority_level']) && $_POST['priority_level'] == 'low') ? 'selected' : ''; ?>" 
+                                     onclick="selectPriority('low')">
+                                    Low
+                                    <div style="font-size: 12px; margin-top: 5px; opacity: 0.9;">Minor issue</div>
+                                </div>
+                                <div class="priority-option priority-medium <?php echo (isset($_POST['priority_level']) && $_POST['priority_level'] == 'medium') ? 'selected' : ''; ?>" 
+                                     onclick="selectPriority('medium')">
+                                    Medium
+                                    <div style="font-size: 12px; margin-top: 5px; opacity: 0.9;">Moderate impact</div>
+                                </div>
+                                <div class="priority-option priority-high <?php echo (isset($_POST['priority_level']) && $_POST['priority_level'] == 'high') ? 'selected' : ''; ?>" 
+                                     onclick="selectPriority('high')">
+                                    High
+                                    <div style="font-size: 12px; margin-top: 5px; opacity: 0.9;">Significant impact</div>
+                                </div>
+                                <div class="priority-option priority-critical <?php echo (isset($_POST['priority_level']) && $_POST['priority_level'] == 'critical') ? 'selected' : ''; ?>" 
+                                     onclick="selectPriority('critical')">
+                                    Critical
+                                    <div style="font-size: 12px; margin-top: 5px; opacity: 0.9;">System blocking</div>
+                                </div>
+                            </div>
+                            <input type="hidden" id="priority_level" name="priority_level" value="<?php echo htmlspecialchars($_POST['priority_level'] ?? ''); ?>" required>
+                            <div class="field-error">Please select priority level</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label" for="impact_description">Impact Description</label>
+                            <textarea id="impact_description" name="impact_description" class="form-textarea" 
+                                      placeholder="How is this issue affecting your work? How many users are affected? What's the business impact?"
+                                      oninput="validateTextarea(this)"><?php echo htmlspecialchars($_POST['impact_description'] ?? ''); ?></textarea>
+                            <div class="field-error"></div>
+                        </div>
+                    </div>
+
+                    <!-- Additional Information Section -->
+                    <div class="form-section">
+                        <h2 class="section-title">Additional Information</h2>
+                        
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="follow_up" name="follow_up" class="checkbox-input" 
+                                   <?php echo (isset($_POST['follow_up']) && $_POST['follow_up']) ? 'checked' : ''; ?>>
+                            <label for="follow_up" class="checkbox-label">
+                                I would like to be contacted for follow-up information regarding this issue. 
+                                (Our support team may reach out to you for additional details if needed.)
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <div class="action-buttons">
+                        <button type="submit" class="btn btn-primary" id="submitButton">Submit Issue Report</button>
+                        <button type="button" class="btn btn-secondary" onclick="window.location.href='index.php'">Back to Dashboard</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
 
     <script>
-        // Toggle view details
-        function toggleDetails(elementId) {
-            const element = document.getElementById(elementId);
-            if (element.style.display === 'block') {
-                element.style.display = 'none';
+        // Field validation functions
+        function validateField(field) {
+            const errorElement = field.parentElement.querySelector('.field-error');
+            if (field.value.trim() === '') {
+                showError(field, errorElement, field.labels[0].textContent + ' is required');
+                return false;
             } else {
-                // Hide all other details first
-                document.querySelectorAll('.view-details').forEach(detail => {
-                    detail.style.display = 'none';
-                });
-                element.style.display = 'block';
-                element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                hideError(field, errorElement);
+                return true;
             }
         }
 
-        // Toggle form visibility
-        function toggleForm(formId) {
-            const form = document.getElementById(formId);
-            if (form.style.display === 'block') {
-                form.style.display = 'none';
+        function validateTextarea(field) {
+            const errorElement = field.parentElement.querySelector('.field-error');
+            if (field.hasAttribute('required') && field.value.trim() === '') {
+                showError(field, errorElement, field.labels[0].textContent + ' is required');
+                return false;
             } else {
-                // Hide all other forms first
-                document.querySelectorAll('.edit-form').forEach(form => {
-                    form.style.display = 'none';
-                });
-                form.style.display = 'block';
-                form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                hideError(field, errorElement);
+                return true;
             }
         }
 
-        // Show edit form from view details
-        function showEditForm(referralId) {
-            toggleDetails('outgoing-' + referralId);
-            setTimeout(() => {
-                toggleForm('edit-form-' + referralId);
-            }, 300);
+        function showError(field, errorElement, message) {
+            errorElement.textContent = message;
+            errorElement.style.display = 'block';
+            field.classList.add('input-error');
+            field.classList.remove('input-success');
         }
 
-        // Show resend form from view details
-        function showResendForm(referralId) {
-            toggleDetails('outgoing-' + referralId);
-            setTimeout(() => {
-                toggleForm('resend-form-' + referralId);
-            }, 300);
+        function hideError(field, errorElement) {
+            errorElement.style.display = 'none';
+            field.classList.remove('input-error');
+            field.classList.add('input-success');
         }
 
-        // Add smooth animations
+        // Priority level selection
+        function selectPriority(level) {
+            const options = document.querySelectorAll('.priority-option');
+            options.forEach(option => {
+                option.classList.remove('selected');
+            });
+            
+            const selectedOption = document.querySelector(`.priority-${level}`);
+            selectedOption.classList.add('selected');
+            
+            const hiddenInput = document.getElementById('priority_level');
+            hiddenInput.value = level;
+            
+            // Validate the field
+            validateField(hiddenInput);
+        }
+
+        // Form submission validation
+        document.getElementById('issueForm').addEventListener('submit', function(e) {
+            let isValid = true;
+            
+            // Validate all required fields
+            const requiredFields = document.querySelectorAll('[required]');
+            requiredFields.forEach(field => {
+                if (field.tagName === 'SELECT') {
+                    if (!validateField(field)) isValid = false;
+                } else if (field.tagName === 'TEXTAREA') {
+                    if (!validateTextarea(field)) isValid = false;
+                } else {
+                    if (!validateField(field)) isValid = false;
+                }
+            });
+            
+            if (!isValid) {
+                e.preventDefault();
+                // Scroll to first error
+                const firstError = document.querySelector('.field-error[style="display: block;"]');
+                if (firstError) {
+                    firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            } else {
+                // Show loading state
+                const submitButton = document.getElementById('submitButton');
+                submitButton.innerHTML = 'Submitting Report...';
+                submitButton.disabled = true;
+            }
+        });
+
+        // Auto-close messages after 5 seconds
         document.addEventListener('DOMContentLoaded', function() {
-            // Add fade-in animation to elements
-            const elements = document.querySelectorAll('.stat-card, .section');
-            elements.forEach((element, index) => {
-                element.style.animationDelay = `${index * 0.1}s`;
-                element.classList.add('fade-in');
-            });
-
-            // Add confirmation for destructive actions
-            const denyButtons = document.querySelectorAll('.confirm-deny-btn');
-            denyButtons.forEach(button => {
-                button.addEventListener('click', function(e) {
-                    if (!confirm('Are you sure you want to decline this referral? This action cannot be undone.')) {
-                        e.preventDefault();
-                    }
-                });
-            });
-
-            // Auto-close messages after 5 seconds
             const messages = document.querySelectorAll('.message');
             messages.forEach(message => {
                 setTimeout(() => {
@@ -1283,6 +869,19 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                     }, 300);
                 }, 5000);
             });
+
+            // Add fade-in animation to sections
+            const sections = document.querySelectorAll('.form-section');
+            sections.forEach((section, index) => {
+                section.style.animationDelay = `${index * 0.1}s`;
+                section.classList.add('fade-in');
+            });
+
+            // Initialize priority level if already selected
+            const priorityLevel = document.getElementById('priority_level').value;
+            if (priorityLevel) {
+                selectPriority(priorityLevel);
+            }
         });
 
         // Add fade-in animation style
