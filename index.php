@@ -24,6 +24,63 @@ if ($user_stmt->rowCount() === 0) {
     exit();
 }
 
+// Handle capacity update
+if (isset($_POST['update_capacity'])) {
+    try {
+        $total_capacity = (int)$_POST['total_capacity'];
+        $available_capacity = (int)$_POST['available_capacity'];
+        
+        if ($total_capacity < 0 || $available_capacity < 0) {
+            $_SESSION['error_message'] = "Capacity values cannot be negative!";
+        } elseif ($available_capacity > $total_capacity) {
+            $_SESSION['error_message'] = "Available capacity cannot exceed total capacity!";
+        } else {
+            // Calculate utilization rate
+            $utilization_rate = $total_capacity > 0 ? (($total_capacity - $available_capacity) / $total_capacity) * 100 : 0;
+            
+            $update_stmt = $pdo->prepare("
+                INSERT INTO capacity (user_id, total_capacity, available_capacity, utilization_rate, notes) 
+                VALUES (?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE 
+                    total_capacity = VALUES(total_capacity),
+                    available_capacity = VALUES(available_capacity),
+                    utilization_rate = VALUES(utilization_rate),
+                    notes = VALUES(notes),
+                    created_at = NOW()
+            ");
+            $update_stmt->execute([
+                $user_id, 
+                $total_capacity, 
+                $available_capacity, 
+                $utilization_rate,
+                $_POST['capacity_notes'] ?? null
+            ]);
+            
+            $_SESSION['success_message'] = "Capacity updated successfully!";
+        }
+        header("Location: index.php");
+        exit();
+    } catch (PDOException $e) {
+        error_log("Capacity update error: " . $e->getMessage());
+        $_SESSION['error_message'] = "Error updating capacity. Please try again.";
+        header("Location: index.php");
+        exit();
+    }
+}
+
+// Handle mark all alerts as read
+if (isset($_GET['mark_all_read'])) {
+    try {
+        $update_stmt = $pdo->prepare("UPDATE alerts SET is_read = 1 WHERE user_id = ? AND is_read = 0");
+        $update_stmt->execute([$user_id]);
+        $_SESSION['success_message'] = "All alerts marked as read!";
+        header("Location: index.php");
+        exit();
+    } catch (PDOException $e) {
+        error_log("Mark alerts read error: " . $e->getMessage());
+    }
+}
+
 // Handle logout
 if (isset($_GET['logout'])) {
     // Clear remember token from database
@@ -47,6 +104,17 @@ try {
     $alert_stmt->execute([$user_id]);
     $alert_data = $alert_stmt->fetch(PDO::FETCH_ASSOC);
     $alert_count = $alert_data['alert_count'] ?? 0;
+
+    // Fetch recent alerts for display
+    $recent_alerts_stmt = $pdo->prepare("
+        SELECT id, message, alert_type, created_at, is_read 
+        FROM alerts 
+        WHERE user_id = ? 
+        ORDER BY created_at DESC 
+        LIMIT 5
+    ");
+    $recent_alerts_stmt->execute([$user_id]);
+    $recent_alerts = $recent_alerts_stmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Fetch recent referrals (both incoming and outgoing)
     $referral_stmt = $pdo->prepare("
@@ -84,22 +152,45 @@ try {
     $incoming_referrals = $stats_data['incoming'] ?? 0;
     $pending_referrals = $stats_data['pending'] ?? 0;
 
-    // Fetch capacity
-    $capacity_stmt = $pdo->prepare("SELECT available_capacity FROM capacity WHERE user_id = ? ORDER BY created_at DESC LIMIT 1");
+    // Fetch capacity with latest record
+    $capacity_stmt = $pdo->prepare("
+        SELECT total_capacity, available_capacity, utilization_rate, notes 
+        FROM capacity 
+        WHERE user_id = ? 
+        ORDER BY created_at DESC 
+        LIMIT 1
+    ");
     $capacity_stmt->execute([$user_id]);
     $capacity_data = $capacity_stmt->fetch(PDO::FETCH_ASSOC);
+    
+    $total_capacity = $capacity_data['total_capacity'] ?? 0;
     $available_capacity = $capacity_data['available_capacity'] ?? 0;
+    $utilization_rate = $capacity_data['utilization_rate'] ?? 0;
+    $capacity_notes = $capacity_data['notes'] ?? '';
+    
+    // Check if user is at full capacity
+    $is_at_full_capacity = ($available_capacity <= 0 && $total_capacity > 0);
 
 } catch (PDOException $e) {
     error_log("Dashboard data error: " . $e->getMessage());
     $alert_count = 0;
+    $recent_alerts = [];
     $recent_referrals = [];
     $today_referrals = 0;
     $outgoing_referrals = 0;
     $incoming_referrals = 0;
     $pending_referrals = 0;
+    $total_capacity = 0;
     $available_capacity = 0;
+    $utilization_rate = 0;
+    $capacity_notes = '';
+    $is_at_full_capacity = false;
 }
+
+// Check for messages
+$success_message = $_SESSION['success_message'] ?? '';
+$error_message = $_SESSION['error_message'] ?? '';
+unset($_SESSION['success_message'], $_SESSION['error_message']);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -226,12 +317,36 @@ try {
             font-size: 12px;
             font-weight: bold;
             animation: pulse 2s infinite;
+            cursor: pointer;
         }
 
         @keyframes pulse {
             0% { transform: scale(1); }
             50% { transform: scale(1.1); }
             100% { transform: scale(1); }
+        }
+
+        /* Message Styles */
+        .message {
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+
+        .success-message {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .error-message {
+            background-color: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            border: 1px solid #f5c6cb;
         }
 
         .welcome-banner {
@@ -274,6 +389,22 @@ try {
             border-radius: 12px;
         }
 
+        .mark-read-btn {
+            background: rgba(255, 255, 255, 0.3);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.5);
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            cursor: pointer;
+            margin-left: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .mark-read-btn:hover {
+            background: rgba(255, 255, 255, 0.4);
+        }
+
         .dashboard-grid {
             display: grid;
             grid-template-columns: 2fr 1fr;
@@ -302,11 +433,11 @@ try {
             font-weight: 600;
         }
 
-        .referrals-list {
+        .referrals-list, .alerts-list {
             list-style: none;
         }
 
-        .referral-item {
+        .referral-item, .alert-item {
             padding: 15px;
             border-bottom: 1px solid #f1f1f1;
             display: flex;
@@ -315,18 +446,19 @@ try {
             transition: background-color 0.3s ease;
         }
 
-        .referral-item:hover {
+        .referral-item:hover, .alert-item:hover {
             background-color: #f8f9fa;
         }
 
-        .referral-item:last-child {
+        .referral-item:last-child, .alert-item:last-child {
             border-bottom: none;
         }
 
-        .referral-info {
+        .referral-info, .alert-info {
             display: flex;
             flex-direction: column;
             gap: 5px;
+            flex: 1;
         }
 
         .referral-code {
@@ -335,19 +467,24 @@ try {
             font-size: 14px;
         }
 
-        .referral-condition {
+        .referral-condition, .alert-message {
             color: #7f8c8d;
             font-size: 13px;
         }
 
-        .referral-meta {
+        .alert-message.unread {
+            color: #2c3e50;
+            font-weight: 500;
+        }
+
+        .referral-meta, .alert-meta {
             display: flex;
             flex-direction: column;
             align-items: flex-end;
             gap: 5px;
         }
 
-        .referral-type {
+        .referral-type, .alert-type {
             font-size: 12px;
             padding: 3px 8px;
             border-radius: 12px;
@@ -362,6 +499,21 @@ try {
         .type-incoming {
             background-color: #e8f5e8;
             color: #388e3c;
+        }
+
+        .alert-info {
+            background-color: #e3f2fd;
+            color: #1976d2;
+        }
+
+        .alert-warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+
+        .alert-urgent {
+            background-color: #f8d7da;
+            color: #721c24;
         }
 
         .referral-status {
@@ -386,12 +538,12 @@ try {
             color: #d32f2f;
         }
 
-        .referral-date {
+        .referral-date, .alert-date {
             font-size: 12px;
             color: #95a5a6;
         }
 
-        .no-referrals {
+        .no-referrals, .no-alerts {
             text-align: center;
             color: #7f8c8d;
             font-style: italic;
@@ -411,6 +563,8 @@ try {
             padding: 20px;
             text-align: center;
             transition: transform 0.3s ease;
+            position: relative;
+            overflow: hidden;
         }
 
         .stat-card:hover {
@@ -426,6 +580,14 @@ try {
         .stat-label {
             font-size: 14px;
             opacity: 0.9;
+        }
+
+        .capacity-badge {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            font-size: 24px;
+            opacity: 0.1;
         }
 
         .action-buttons {
@@ -479,6 +641,118 @@ try {
         .btn-logout:hover {
             background-color: #f8f9fa;
             transform: translateY(-2px);
+        }
+
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 14px;
+            min-width: auto;
+        }
+
+        /* Capacity Management Styles */
+        .capacity-status {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            font-weight: 500;
+            margin-left: 10px;
+        }
+        
+        .capacity-full {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .capacity-available {
+            background-color: #d1ecf1;
+            color: #0c5460;
+        }
+        
+        .capacity-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .capacity-modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+        
+        .capacity-form-group {
+            margin-bottom: 20px;
+        }
+        
+        .capacity-form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #2c3e50;
+        }
+        
+        .capacity-form-group input,
+        .capacity-form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+        
+        .capacity-form-group input:focus,
+        .capacity-form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .capacity-form-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 25px;
+        }
+        
+        .capacity-warning {
+            background-color: #fff3cd;
+            color: #856404;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            border-left: 4px solid #ffc107;
+        }
+        
+        .utilization-bar {
+            height: 8px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+        
+        .utilization-fill {
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        
+        .utilization-text {
+            font-size: 12px;
+            color: #6c757d;
+            text-align: right;
         }
 
         /* Responsive Styles */
@@ -588,11 +862,31 @@ try {
                 <h1 class="page-title">Dashboard</h1>
                 <div class="user-info">
                     <span>Welcome, <?php echo htmlspecialchars($user_name); ?></span>
+                    <?php if ($is_at_full_capacity): ?>
+                        <span class="capacity-status capacity-full" title="You are at full capacity and cannot receive new referrals">
+                            Full Capacity
+                        </span>
+                    <?php else: ?>
+                        <span class="capacity-status capacity-available" title="You have available capacity for new referrals">
+                            Available
+                        </span>
+                    <?php endif; ?>
                     <?php if ($alert_count > 0): ?>
-                        <div class="alert-badge" title="<?php echo $alert_count; ?> unread alerts"><?php echo $alert_count; ?></div>
+                        <a href="index.php?mark_all_read=true" class="alert-badge" title="Click to mark all alerts as read">
+                            <?php echo $alert_count; ?>
+                        </a>
                     <?php endif; ?>
                 </div>
             </div>
+
+            <!-- Success/Error Messages -->
+            <?php if (!empty($success_message)): ?>
+                <div class="message success-message"><?php echo htmlspecialchars($success_message); ?></div>
+            <?php endif; ?>
+            
+            <?php if (!empty($error_message)): ?>
+                <div class="message error-message"><?php echo htmlspecialchars($error_message); ?></div>
+            <?php endif; ?>
 
             <!-- Welcome Banner -->
             <div class="welcome-banner">
@@ -600,10 +894,18 @@ try {
                 <p class="welcome-message">
                     <?php if ($alert_count > 0): ?>
                         You have <span class="alert-count"><?php echo $alert_count; ?> unread alerts</span> that need your attention!
+                        <a href="index.php?mark_all_read=true" class="mark-read-btn">Mark All Read</a>
                     <?php else: ?>
                         All systems are running smoothly! You have no unread alerts!
                     <?php endif; ?>
                 </p>
+                
+                <?php if ($is_at_full_capacity): ?>
+                    <div class="capacity-warning">
+                        <strong>Capacity Alert:</strong> You are currently at full capacity and will not receive new referrals. 
+                        Please update your capacity settings to accept new patients.
+                    </div>
+                <?php endif; ?>
             </div>
 
             <!-- Dashboard Grid -->
@@ -640,10 +942,50 @@ try {
                     </ul>
                 </div>
 
-                <!-- Today's Stats Section -->
+                <!-- Alerts & Stats Section -->
                 <div class="section">
-                    <h2 class="section-title">Today's Overview</h2>
+                    <h2 class="section-title">Recent Alerts</h2>
+                    <ul class="alerts-list">
+                        <?php if (count($recent_alerts) > 0): ?>
+                            <?php foreach ($recent_alerts as $alert): ?>
+                                <li class="alert-item">
+                                    <div class="alert-info">
+                                        <span class="alert-message <?php echo $alert['is_read'] ? '' : 'unread'; ?>">
+                                            <?php echo htmlspecialchars($alert['message']); ?>
+                                        </span>
+                                    </div>
+                                    <div class="alert-meta">
+                                        <span class="alert-type alert-<?php echo htmlspecialchars($alert['alert_type']); ?>">
+                                            <?php echo ucfirst($alert['alert_type']); ?>
+                                        </span>
+                                        <span class="alert-date">
+                                            <?php echo date('M j, g:i A', strtotime($alert['created_at'])); ?>
+                                        </span>
+                                    </div>
+                                </li>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <li class="alert-item">
+                                <span class="no-alerts">No recent alerts.</span>
+                            </li>
+                        <?php endif; ?>
+                    </ul>
+
+                    <h2 class="section-title" style="margin-top: 30px;">Capacity & Stats</h2>
                     <div class="stats-grid">
+                        <div class="stat-card capacity-card">
+                            <div class="capacity-badge">📊</div>
+                            <div class="stat-value"><?php echo $available_capacity; ?>/<?php echo $total_capacity; ?></div>
+                            <div class="stat-label">Available Capacity</div>
+                            <?php if ($total_capacity > 0): ?>
+                                <div class="utilization-bar">
+                                    <div class="utilization-fill" style="width: <?php echo $utilization_rate; ?>%"></div>
+                                </div>
+                                <div class="utilization-text">
+                                    Utilization: <?php echo number_format($utilization_rate, 1); ?>%
+                                </div>
+                            <?php endif; ?>
+                        </div>
                         <div class="stat-card">
                             <div class="stat-value"><?php echo $today_referrals; ?></div>
                             <div class="stat-label">Total Referrals Today</div>
@@ -656,11 +998,11 @@ try {
                             <div class="stat-value"><?php echo $incoming_referrals; ?></div>
                             <div class="stat-label">Incoming Referrals</div>
                         </div>
-                        <div class="stat-card">
-                            <div class="stat-value"><?php echo $available_capacity; ?></div>
-                            <div class="stat-label">Available Capacity</div>
-                        </div>
                     </div>
+                    
+                    <button onclick="openCapacityModal()" class="btn btn-primary" style="width: 100%; margin-top: 20px;">
+                        Update Capacity Settings
+                    </button>
                 </div>
             </div>
 
@@ -670,6 +1012,40 @@ try {
                 <a href="report_issue.php" class="btn btn-secondary">Report an Issue</a>
                 <a href="index.php?logout=true" class="btn btn-logout">Log Out</a>
             </div>
+        </div>
+    </div>
+
+    <!-- Capacity Modal -->
+    <div id="capacityModal" class="capacity-modal">
+        <div class="capacity-modal-content">
+            <h2 style="margin-bottom: 20px; color: #2c3e50;">Update Capacity</h2>
+            <form method="POST" action="index.php">
+                <div class="capacity-form-group">
+                    <label for="total_capacity">Total Capacity:</label>
+                    <input type="number" id="total_capacity" name="total_capacity" 
+                           value="<?php echo $total_capacity; ?>" min="0" required>
+                </div>
+                
+                <div class="capacity-form-group">
+                    <label for="available_capacity">Available Capacity:</label>
+                    <input type="number" id="available_capacity" name="available_capacity" 
+                           value="<?php echo $available_capacity; ?>" min="0" required>
+                    <small style="color: #6c757d; display: block; margin-top: 5px;">
+                        Set to 0 if you're at full capacity and don't want to receive new referrals.
+                    </small>
+                </div>
+                
+                <div class="capacity-form-group">
+                    <label for="capacity_notes">Notes (Optional):</label>
+                    <textarea id="capacity_notes" name="capacity_notes" rows="3" 
+                              placeholder="Any notes about your current capacity..."><?php echo htmlspecialchars($capacity_notes); ?></textarea>
+                </div>
+                
+                <div class="capacity-form-actions">
+                    <button type="button" class="btn btn-logout btn-small" onclick="closeCapacityModal()">Cancel</button>
+                    <button type="submit" name="update_capacity" class="btn btn-primary btn-small">Update Capacity</button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -687,7 +1063,7 @@ try {
             const buttons = document.querySelectorAll('.btn');
             buttons.forEach(button => {
                 button.addEventListener('click', function(e) {
-                    if (this.href.includes('logout')) {
+                    if (this.href && this.href.includes('logout')) {
                         if (!confirm('Are you sure you want to log out?')) {
                             e.preventDefault();
                         }
@@ -695,46 +1071,48 @@ try {
                 });
             });
 
-            // Auto-refresh alerts count every 30 seconds
+            // Auto-refresh page every 60 seconds to update alert counts
             setInterval(() => {
-                fetch('includes/get_alerts_count.php')
-                    .then(response => response.json())
-                    .then(data => {
-                        const alertBadge = document.querySelector('.alert-badge');
-                        const alertCount = document.querySelector('.alert-count');
-                        const welcomeMessage = document.querySelector('.welcome-message');
-                        
-                        if (data.alert_count > 0) {
-                            if (alertBadge) {
-                                alertBadge.textContent = data.alert_count;
-                            } else {
-                                // Create alert badge if it doesn't exist
-                                const userInfo = document.querySelector('.user-info');
-                                const newBadge = document.createElement('div');
-                                newBadge.className = 'alert-badge';
-                                newBadge.textContent = data.alert_count;
-                                userInfo.appendChild(newBadge);
-                            }
-                            
-                            if (alertCount) {
-                                alertCount.textContent = data.alert_count;
-                            }
-                            
-                            if (welcomeMessage) {
-                                welcomeMessage.innerHTML = `You have <span class="alert-count">${data.alert_count} unread alerts</span> that need your attention!`;
-                            }
-                        } else {
-                            // Remove alert badge if no alerts
-                            if (alertBadge) {
-                                alertBadge.remove();
-                            }
-                            if (welcomeMessage) {
-                                welcomeMessage.innerHTML = 'All systems are running smoothly! You have no unread alerts!';
-                            }
-                        }
-                    })
-                    .catch(error => console.error('Error fetching alerts:', error));
-            }, 30000);
+                location.reload();
+            }, 60000);
+            
+            // Validate capacity form
+            const capacityForm = document.querySelector('form[method="POST"]');
+            if (capacityForm) {
+                capacityForm.addEventListener('submit', function(e) {
+                    const total = parseInt(document.getElementById('total_capacity').value);
+                    const available = parseInt(document.getElementById('available_capacity').value);
+                    
+                    if (total < 0 || available < 0) {
+                        e.preventDefault();
+                        alert('Capacity values cannot be negative!');
+                        return false;
+                    }
+                    
+                    if (available > total) {
+                        e.preventDefault();
+                        alert('Available capacity cannot exceed total capacity!');
+                        return false;
+                    }
+                });
+            }
+        });
+
+        // Capacity modal functions
+        function openCapacityModal() {
+            document.getElementById('capacityModal').style.display = 'flex';
+        }
+        
+        function closeCapacityModal() {
+            document.getElementById('capacityModal').style.display = 'none';
+        }
+        
+        // Close modal when clicking outside
+        window.addEventListener('click', function(e) {
+            const modal = document.getElementById('capacityModal');
+            if (e.target === modal) {
+                closeCapacityModal();
+            }
         });
 
         // Add fade-in animation

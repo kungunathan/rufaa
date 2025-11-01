@@ -486,6 +486,122 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
         }
 
+        /* User Search Styles */
+        .user-search-container {
+            position: relative;
+        }
+
+        .user-search-input {
+            width: 100%;
+            padding: 12px 40px 12px 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+
+        .user-search-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .search-icon {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #999;
+        }
+
+        .user-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 2px solid #e1e5e9;
+            border-top: none;
+            border-radius: 0 0 6px 6px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .user-result {
+            padding: 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f1f1;
+            transition: background-color 0.3s ease;
+        }
+
+        .user-result:hover {
+            background-color: #f8f9fa;
+        }
+
+        .user-result:last-child {
+            border-bottom: none;
+        }
+
+        .user-name {
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 4px;
+        }
+
+        .user-email {
+            color: #666;
+            font-size: 12px;
+        }
+
+        .selected-user {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border-left: 4px solid #667eea;
+        }
+
+        .selected-user-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .selected-user-details .user-name {
+            font-size: 16px;
+            margin-bottom: 2px;
+        }
+
+        .selected-user-details .user-email {
+            font-size: 14px;
+            color: #666;
+        }
+
+        .remove-selection {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background-color 0.3s ease;
+        }
+
+        .remove-selection:hover {
+            background: #c0392b;
+        }
+
+        .no-results {
+            padding: 12px;
+            color: #666;
+            text-align: center;
+            font-style: italic;
+        }
+
         /* Responsive Design */
         @media (max-width: 768px) {
             .sidebar {
@@ -528,6 +644,16 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             .btn {
                 min-width: auto;
                 width: 100%;
+            }
+
+            .selected-user-info {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+
+            .remove-selection {
+                align-self: flex-end;
             }
         }
 
@@ -720,18 +846,30 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                                 <div class="field-error">Referring facility is required</div>
                             </div>
                         </div>
+                        
+                        <!-- User Search Interface -->
                         <div class="form-group">
-                            <label class="form-label required" for="receiving_user_id">Refer To User</label>
-                            <select id="receiving_user_id" name="receiving_user_id" class="form-select" required onchange="validateField(this)">
-                                <option value="">Select receiving user</option>
-                                <?php foreach($available_users as $user): ?>
-                                <option value="<?php echo $user['id']; ?>" <?php echo (isset($_POST['receiving_user_id']) && $_POST['receiving_user_id'] == $user['id']) ? 'selected' : ''; ?>>
-                                    <?php echo htmlspecialchars($user['first_name'] . ' ' . $user['last_name'] . ' (' . $user['email'] . ')'); ?>
-                                </option>
-                                <?php endforeach; ?>
-                            </select>
+                            <label class="form-label required">Refer To User</label>
+                            <div class="user-search-container">
+                                <input type="text" id="userSearch" class="user-search-input" 
+                                       placeholder="Search for users by name or email..."
+                                       oninput="searchUsers(this.value)">
+                                <div class="search-icon">🔍</div>
+                                <div id="userResults" class="user-results"></div>
+                                <input type="hidden" id="receiving_user_id" name="receiving_user_id" value="<?php echo htmlspecialchars($_POST['receiving_user_id'] ?? ''); ?>" required>
+                            </div>
+                            <div id="selectedUser" class="selected-user" style="display: none;">
+                                <div class="selected-user-info">
+                                    <div class="selected-user-details">
+                                        <div class="user-name" id="selectedUserName"></div>
+                                        <div class="user-email" id="selectedUserEmail"></div>
+                                    </div>
+                                    <button type="button" class="remove-selection" onclick="clearUserSelection()">Remove</button>
+                                </div>
+                            </div>
                             <div class="field-error">Please select a receiving user</div>
                         </div>
+
                         <div class="form-group">
                             <label class="form-label required" for="specialty">Required Specialty</label>
                             <select id="specialty" name="specialty" class="form-select" required onchange="validateField(this)">
@@ -796,6 +934,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     </div>
 
     <script>
+        // Available users data from PHP
+        const availableUsers = <?php echo json_encode($available_users); ?>;
+
         // Field validation functions
         function validateField(field) {
             const errorElement = field.parentElement.querySelector('.field-error');
@@ -860,6 +1001,82 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             validateField(hiddenInput);
         }
 
+        // User search functionality
+        function searchUsers(query) {
+            const resultsContainer = document.getElementById('userResults');
+            const userSearchInput = document.getElementById('userSearch');
+            
+            if (query.length < 2) {
+                resultsContainer.style.display = 'none';
+                return;
+            }
+            
+            const filteredUsers = availableUsers.filter(user => {
+                const fullName = `${user.first_name} ${user.last_name}`.toLowerCase();
+                const email = user.email.toLowerCase();
+                const searchTerm = query.toLowerCase();
+                
+                return fullName.includes(searchTerm) || email.includes(searchTerm);
+            });
+            
+            displayUserResults(filteredUsers);
+        }
+
+        function displayUserResults(users) {
+            const resultsContainer = document.getElementById('userResults');
+            
+            if (users.length === 0) {
+                resultsContainer.innerHTML = '<div class="no-results">No users found</div>';
+            } else {
+                resultsContainer.innerHTML = users.map(user => `
+                    <div class="user-result" onclick="selectUser(${user.id}, '${user.first_name} ${user.last_name}', '${user.email}')">
+                        <div class="user-name">${user.first_name} ${user.last_name}</div>
+                        <div class="user-email">${user.email}</div>
+                    </div>
+                `).join('');
+            }
+            
+            resultsContainer.style.display = 'block';
+        }
+
+        function selectUser(userId, userName, userEmail) {
+            const receivingUserIdInput = document.getElementById('receiving_user_id');
+            const userSearchInput = document.getElementById('userSearch');
+            const selectedUserDiv = document.getElementById('selectedUser');
+            const selectedUserName = document.getElementById('selectedUserName');
+            const selectedUserEmail = document.getElementById('selectedUserEmail');
+            const resultsContainer = document.getElementById('userResults');
+            
+            // Set the hidden input value
+            receivingUserIdInput.value = userId;
+            
+            // Update selected user display
+            selectedUserName.textContent = userName;
+            selectedUserEmail.textContent = userEmail;
+            selectedUserDiv.style.display = 'block';
+            
+            // Clear search input and hide results
+            userSearchInput.value = '';
+            resultsContainer.style.display = 'none';
+            
+            // Validate the field
+            validateField(receivingUserIdInput);
+        }
+
+        function clearUserSelection() {
+            const receivingUserIdInput = document.getElementById('receiving_user_id');
+            const selectedUserDiv = document.getElementById('selectedUser');
+            const userSearchInput = document.getElementById('userSearch');
+            
+            receivingUserIdInput.value = '';
+            selectedUserDiv.style.display = 'none';
+            userSearchInput.value = '';
+            
+            // Clear validation
+            const errorElement = receivingUserIdInput.parentElement.querySelector('.field-error');
+            hideError(receivingUserIdInput, errorElement);
+        }
+
         // Consent validation
         function validateConsent() {
             const consentCheckbox = document.getElementById('consent');
@@ -886,6 +1103,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 } else if (field.type === 'number') {
                     if (!validateAge(field)) isValid = false;
                 } else if (field.tagName === 'SELECT') {
+                    if (!validateField(field)) isValid = false;
+                } else if (field.id === 'receiving_user_id') {
                     if (!validateField(field)) isValid = false;
                 } else {
                     if (!validateField(field)) isValid = false;
@@ -931,6 +1150,23 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             if (urgencyLevel) {
                 selectUrgency(urgencyLevel);
             }
+
+            // Initialize selected user if already set
+            const receivingUserId = document.getElementById('receiving_user_id').value;
+            if (receivingUserId) {
+                const selectedUser = availableUsers.find(user => user.id == receivingUserId);
+                if (selectedUser) {
+                    selectUser(selectedUser.id, `${selectedUser.first_name} ${selectedUser.last_name}`, selectedUser.email);
+                }
+            }
+
+            // Close user results when clicking outside
+            document.addEventListener('click', function(e) {
+                const userSearchContainer = document.querySelector('.user-search-container');
+                if (!userSearchContainer.contains(e.target)) {
+                    document.getElementById('userResults').style.display = 'none';
+                }
+            });
         });
 
         // Add fade-in animation style
