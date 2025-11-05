@@ -2,6 +2,11 @@
 session_start();
 require_once 'config/database.php';
 
+// Include DomPDF at the top level
+require_once 'vendor/autoload.php';
+use Dompdf\Dompdf;
+use Dompdf\Options;
+
 // Check if user is logged in and active
 if (!isset($_SESSION['logged_in']) || $_SESSION['logged_in'] !== true) {
     header("Location: login.php");
@@ -25,6 +30,7 @@ if ($user_stmt->rowCount() === 0) {
 
 // Handle referral actions
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
+    // Existing referral actions (accept, deny, resend, edit)
     if (isset($_POST['action'])) {
         $referral_id = filter_input(INPUT_POST, 'referral_id', FILTER_VALIDATE_INT);
         $action = $_POST['action'];
@@ -169,6 +175,373 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         header("Location: referrals.php");
         exit();
     }
+    
+    // Handle report generation and PDF download
+    if (isset($_POST['generate_report'])) {
+        $report_type = $_POST['report_type'] ?? 'user_activity';
+        $date_range = $_POST['date_range'] ?? 'all_time';
+        $start_date = $_POST['start_date'] ?? '';
+        $end_date = $_POST['end_date'] ?? '';
+        
+        try {
+            // Calculate date range conditions
+            $date_conditions = "";
+            $params = [$user_id, $user_id]; // For both user_id and receiving_user_id
+            
+            switch ($date_range) {
+                case 'last_week':
+                    $date_conditions = " AND r.created_at >= DATE_SUB(NOW(), INTERVAL 1 WEEK)";
+                    break;
+                case 'last_month':
+                    $date_conditions = " AND r.created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)";
+                    break;
+                case 'last_quarter':
+                    $date_conditions = " AND r.created_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)";
+                    break;
+                case 'custom':
+                    if ($start_date && $end_date) {
+                        $date_conditions = " AND DATE(r.created_at) BETWEEN ? AND ?";
+                        $params[] = $start_date;
+                        $params[] = $end_date;
+                    }
+                    break;
+                // 'all_time' has no date conditions
+            }
+            
+            // Fetch comprehensive report data
+            $report_data = [];
+            
+            // User referral activity (both sent and received)
+            $activity_stmt = $pdo->prepare("
+                SELECT 
+                    'outgoing' as type,
+                    r.referral_code,
+                    r.patient_name,
+                    r.condition_description,
+                    r.status,
+                    r.urgency_level,
+                    r.created_at,
+                    CONCAT(u.first_name, ' ', u.last_name) as related_user_name,
+                    r.feedback,
+                    r.responded_at
+                FROM referrals r 
+                JOIN users u ON r.receiving_user_id = u.id 
+                WHERE r.user_id = ? $date_conditions
+                
+                UNION ALL
+                
+                SELECT 
+                    'incoming' as type,
+                    r.referral_code,
+                    r.patient_name,
+                    r.condition_description,
+                    r.status,
+                    r.urgency_level,
+                    r.created_at,
+                    CONCAT(u.first_name, ' ', u.last_name) as related_user_name,
+                    r.feedback,
+                    r.responded_at
+                FROM referrals r 
+                JOIN users u ON r.user_id = u.id 
+                WHERE r.receiving_user_id = ? $date_conditions
+                ORDER BY created_at DESC
+            ");
+            
+            $activity_stmt->execute($params);
+            $report_data['referral_activity'] = $activity_stmt->fetchAll(PDO::FETCH_ASSOC);
+            
+            // Summary statistics
+            $summary_stmt = $pdo->prepare("
+                SELECT 
+                    COUNT(*) as total_referrals,
+                    SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) as accepted,
+                    SUM(CASE WHEN status = 'declined' THEN 1 ELSE 0 END) as declined,
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
+                    SUM(CASE WHEN urgency_level = 'emergency' THEN 1 ELSE 0 END) as emergency,
+                    SUM(CASE WHEN urgency_level = 'urgent' THEN 1 ELSE 0 END) as urgent,
+                    SUM(CASE WHEN urgency_level = 'routine' THEN 1 ELSE 0 END) as routine,
+                    SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as sent_count,
+                    SUM(CASE WHEN receiving_user_id = ? THEN 1 ELSE 0 END) as received_count
+                FROM referrals 
+                WHERE (user_id = ? OR receiving_user_id = ?) $date_conditions
+            ");
+            
+            $summary_params = array_merge([$user_id, $user_id, $user_id, $user_id], array_slice($params, 2));
+            $summary_stmt->execute($summary_params);
+            $report_data['summary'] = $summary_stmt->fetch(PDO::FETCH_ASSOC);
+            
+            // Generate PDF using DomPDF
+            // Configure DomPDF options
+            $options = new Options();
+            $options->set('isHtml5ParserEnabled', true);
+            $options->set('isRemoteEnabled', true);
+            $options->set('defaultFont', 'Arial');
+            
+            $dompdf = new Dompdf($options);
+            
+            // Generate HTML content for PDF
+            $html = generateReportHTML($report_data, $report_type, $date_range, $start_date, $end_date, $user_name);
+            
+            // Load HTML content
+            $dompdf->loadHtml($html);
+            
+            // Set paper size and orientation
+            $dompdf->setPaper('A4', 'portrait');
+            
+            // Render PDF
+            $dompdf->render();
+            
+            // Generate filename
+            $filename = "referral_report_" . date('Y-m-d_H-i-s') . ".pdf";
+            
+            // Output PDF for download
+            $dompdf->stream($filename, [
+                'Attachment' => true
+            ]);
+            
+            exit();
+            
+        } catch (PDOException $e) {
+            error_log("Report generation error: " . $e->getMessage());
+            $_SESSION['error_message'] = "Failed to generate report: " . $e->getMessage();
+            header("Location: referrals.php");
+            exit();
+        } catch (Exception $e) {
+            error_log("PDF generation error: " . $e->getMessage());
+            $_SESSION['error_message'] = "Failed to generate PDF: " . $e->getMessage();
+            header("Location: referrals.php");
+            exit();
+        }
+    }
+}
+
+/**
+ * Generate HTML content for the PDF report
+ */
+function generateReportHTML($report_data, $report_type, $date_range, $start_date, $end_date, $user_name) {
+    $report_type_labels = [
+        'user_activity' => 'User Referral Activity Report',
+        'referral_summary' => 'Referral Summary Report', 
+        'detailed_analysis' => 'Detailed Referral Analysis Report'
+    ];
+    
+    $date_range_labels = [
+        'all_time' => 'All Time',
+        'last_week' => 'Last 7 Days',
+        'last_month' => 'Last 30 Days',
+        'last_quarter' => 'Last 3 Months',
+        'custom' => 'Custom Range'
+    ];
+    
+    $date_range_text = $date_range_labels[$date_range] ?? 'All Time';
+    if ($date_range === 'custom' && $start_date && $end_date) {
+        $date_range_text = "From " . date('M j, Y', strtotime($start_date)) . " to " . date('M j, Y', strtotime($end_date));
+    }
+    
+    ob_start();
+    ?>
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Referral Report</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                line-height: 1.6;
+                color: #333;
+                margin: 0;
+                padding: 20px;
+            }
+            .header {
+                text-align: center;
+                margin-bottom: 30px;
+                padding-bottom: 20px;
+                border-bottom: 2px solid #667eea;
+            }
+            .header h1 {
+                color: #2c3e50;
+                margin-bottom: 10px;
+                font-size: 24px;
+            }
+            .meta-info {
+                color: #7f8c8d;
+                font-size: 14px;
+                margin-bottom: 10px;
+            }
+            .section {
+                margin-bottom: 25px;
+            }
+            .section h2 {
+                color: #2c3e50;
+                margin-bottom: 15px;
+                padding-bottom: 8px;
+                border-bottom: 1px solid #ecf0f1;
+                font-size: 18px;
+            }
+            .stats-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+                margin-bottom: 20px;
+            }
+            .stat-card {
+                background: #f8f9fa;
+                padding: 15px;
+                border-radius: 6px;
+                text-align: center;
+                border-left: 4px solid #667eea;
+            }
+            .stat-value {
+                font-size: 24px;
+                font-weight: bold;
+                color: #667eea;
+                display: block;
+            }
+            .stat-label {
+                font-size: 12px;
+                color: #7f8c8d;
+                text-transform: uppercase;
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 15px;
+                font-size: 12px;
+            }
+            th {
+                background-color: #667eea;
+                color: white;
+                padding: 10px;
+                text-align: left;
+                font-weight: bold;
+            }
+            td {
+                padding: 10px;
+                border-bottom: 1px solid #ddd;
+            }
+            tr:nth-child(even) {
+                background-color: #f8f9fa;
+            }
+            .status-badge {
+                padding: 4px 8px;
+                border-radius: 12px;
+                font-size: 10px;
+                font-weight: bold;
+                display: inline-block;
+            }
+            .status-pending { background: #fff3cd; color: #856404; }
+            .status-accepted { background: #d4edda; color: #155724; }
+            .status-declined { background: #f8d7da; color: #721c24; }
+            .footer {
+                margin-top: 40px;
+                padding-top: 20px;
+                border-top: 1px solid #ecf0f1;
+                text-align: center;
+                color: #7f8c8d;
+                font-size: 12px;
+            }
+            .no-data {
+                text-align: center;
+                color: #7f8c8d;
+                font-style: italic;
+                padding: 20px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1><?php echo htmlspecialchars($report_type_labels[$report_type] ?? 'Referral Report'); ?></h1>
+            <div class="meta-info">
+                Generated for: <?php echo htmlspecialchars($user_name); ?><br>
+                Date Range: <?php echo htmlspecialchars($date_range_text); ?><br>
+                Generated on: <?php echo date('F j, Y \a\t g:i A'); ?>
+            </div>
+        </div>
+        
+        <?php if (isset($report_data['summary'])): ?>
+        <div class="section">
+            <h2>Summary Statistics</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span class="stat-value"><?php echo $report_data['summary']['total_referrals'] ?? 0; ?></span>
+                    <span class="stat-label">Total Referrals</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value"><?php echo $report_data['summary']['sent_count'] ?? 0; ?></span>
+                    <span class="stat-label">Sent</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value"><?php echo $report_data['summary']['received_count'] ?? 0; ?></span>
+                    <span class="stat-label">Received</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value"><?php echo $report_data['summary']['accepted'] ?? 0; ?></span>
+                    <span class="stat-label">Accepted</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value"><?php echo $report_data['summary']['declined'] ?? 0; ?></span>
+                    <span class="stat-label">Declined</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value"><?php echo $report_data['summary']['pending'] ?? 0; ?></span>
+                    <span class="stat-label">Pending</span>
+                </div>
+            </div>
+        </div>
+        <?php endif; ?>
+        
+        <?php if (isset($report_data['referral_activity']) && !empty($report_data['referral_activity'])): ?>
+        <div class="section">
+            <h2>Referral Activity Details</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Type</th>
+                        <th>Referral Code</th>
+                        <th>Patient</th>
+                        <th>Condition</th>
+                        <th>Status</th>
+                        <th>Urgency</th>
+                        <th>Related User</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($report_data['referral_activity'] as $activity): ?>
+                    <tr>
+                        <td><?php echo date('M j, Y', strtotime($activity['created_at'])); ?></td>
+                        <td><?php echo $activity['type'] === 'outgoing' ? 'Sent' : 'Received'; ?></td>
+                        <td><?php echo htmlspecialchars($activity['referral_code']); ?></td>
+                        <td><?php echo htmlspecialchars($activity['patient_name']); ?></td>
+                        <td><?php echo htmlspecialchars($activity['condition_description']); ?></td>
+                        <td>
+                            <span class="status-badge status-<?php echo $activity['status']; ?>">
+                                <?php echo ucfirst($activity['status']); ?>
+                            </span>
+                        </td>
+                        <td><?php echo ucfirst($activity['urgency_level']); ?></td>
+                        <td><?php echo htmlspecialchars($activity['related_user_name']); ?></td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php else: ?>
+        <div class="section">
+            <h2>Referral Activity</h2>
+            <div class="no-data">No referral activity found for the selected criteria.</div>
+        </div>
+        <?php endif; ?>
+        
+        <div class="footer">
+            <p>Generated by Rufaa Referral System</p>
+            <p>Confidential - For authorized use only</p>
+        </div>
+    </body>
+    </html>
+    <?php
+    return ob_get_clean();
 }
 
 // Fetch data for the page
@@ -428,6 +801,51 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
 
         .stat-icon {
             font-size: 24px;
+        }
+
+        /* Report Form Styles */
+        .report-form {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            margin-bottom: 25px;
+        }
+
+        .report-form .form-row {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .report-form .form-group {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        .report-form label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+            font-size: 14px;
+        }
+
+        .report-form select,
+        .report-form input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        .report-form select:focus,
+        .report-form input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
 
         /* Section Styles */
@@ -714,7 +1132,8 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                 grid-template-columns: 1fr;
             }
             
-            .edit-form .form-row {
+            .edit-form .form-row,
+            .report-form .form-row {
                 flex-direction: column;
                 gap: 0;
             }
@@ -893,6 +1312,48 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                         <div class="stat-icon">⏳</div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Report Generation Section -->
+            <div class="section">
+                <h3 class="section-title">Generate Referral Report</h3>
+                <form method="POST" class="report-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Report Type</label>
+                            <select name="report_type" required>
+                                <option value="user_activity">User Activity</option>
+                                <option value="referral_summary">Referral Summary</option>
+                                <option value="detailed_analysis">Detailed Analysis</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Date Range</label>
+                            <select name="date_range" id="date_range" required onchange="toggleCustomDates()">
+                                <option value="all_time">All Time</option>
+                                <option value="last_week">Last 7 Days</option>
+                                <option value="last_month">Last 30 Days</option>
+                                <option value="last_quarter">Last 3 Months</option>
+                                <option value="custom">Custom Range</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div id="custom_dates" class="form-row" style="display: none;">
+                        <div class="form-group">
+                            <label>Start Date</label>
+                            <input type="date" name="start_date" id="start_date">
+                        </div>
+                        <div class="form-group">
+                            <label>End Date</label>
+                            <input type="date" name="end_date" id="end_date">
+                        </div>
+                    </div>
+                    
+                    <div class="action-buttons" style="margin-top: 20px;">
+                        <button type="submit" name="generate_report" class="btn btn-primary">Generate PDF Report</button>
+                    </div>
+                </form>
             </div>
 
             <!-- Incoming Referrals Section -->
@@ -1238,6 +1699,13 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
             }
         }
 
+        // Toggle custom date inputs
+        function toggleCustomDates() {
+            const dateRange = document.getElementById('date_range').value;
+            const customDates = document.getElementById('custom_dates');
+            customDates.style.display = dateRange === 'custom' ? 'flex' : 'none';
+        }
+
         // Show edit form from view details
         function showEditForm(referralId) {
             toggleDetails('outgoing-' + referralId);
@@ -1283,6 +1751,9 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                     }, 300);
                 }, 5000);
             });
+
+            // Initialize custom date toggle
+            toggleCustomDates();
         });
 
         // Add fade-in animation style

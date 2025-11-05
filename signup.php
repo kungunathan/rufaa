@@ -23,6 +23,8 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         $error = "Please fill in all required fields.";
     } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
         $error = "Please enter a valid email address.";
+    } elseif (!preg_match('/^[0-9]{10}$/', $phone)) {
+        $error = "Please enter a valid 10-digit phone number (numbers only).";
     } elseif (strlen($password) < 8) {
         $error = "Password must be at least 8 characters long.";
     } elseif ($password !== $confirmPassword) {
@@ -302,6 +304,15 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
             opacity: 0.7;
             pointer-events: none;
         }
+
+        /* Input validation states */
+        .input-error {
+            border-color: #e74c3c !important;
+        }
+
+        .input-success {
+            border-color: #27ae60 !important;
+        }
     </style>
 </head>
 <body>
@@ -362,9 +373,10 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
                     <div class="form-group">
                         <label class="form-label" for="phone">Phone Number *</label>
                         <input type="tel" id="phone" name="phone" class="form-input" 
-                               placeholder="Enter your phone number" 
+                               placeholder="Enter 10-digit phone number" 
                                value="<?php echo htmlspecialchars($phone); ?>" 
                                required
+                               maxlength="10"
                                oninput="validatePhone(this)">
                         <div class="field-error" style="color: #e74c3c; font-size: 0.8rem; margin-top: 5px; display: none;"></div>
                     </div>
@@ -416,9 +428,13 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
             const errorElement = field.parentElement.querySelector('.field-error');
             if (field.value.trim() === '') {
                 showError(errorElement, 'This field is required');
+                field.classList.add('input-error');
+                field.classList.remove('input-success');
                 return false;
             } else {
                 hideError(errorElement);
+                field.classList.remove('input-error');
+                field.classList.add('input-success');
                 return true;
             }
         }
@@ -430,12 +446,18 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
             
             if (email === '') {
                 showError(errorElement, 'Email is required');
+                field.classList.add('input-error');
+                field.classList.remove('input-success');
                 return false;
             } else if (!emailRegex.test(email)) {
-                showError(errorElement, 'Please enter a valid email address');
+                showError(errorElement, 'Please enter a valid email address (e.g., name@example.com)');
+                field.classList.add('input-error');
+                field.classList.remove('input-success');
                 return false;
             } else {
                 hideError(errorElement);
+                field.classList.remove('input-error');
+                field.classList.add('input-success');
                 return true;
             }
         }
@@ -443,15 +465,26 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
         function validatePhone(field) {
             const errorElement = field.parentElement.querySelector('.field-error');
             const phone = field.value.trim();
+            const phoneRegex = /^[0-9]{10}$/;
             
-            if (phone === '') {
+            // Remove any non-numeric characters
+            const numericPhone = phone.replace(/[^0-9]/g, '');
+            field.value = numericPhone; // Update field with only numbers
+            
+            if (numericPhone === '') {
                 showError(errorElement, 'Phone number is required');
+                field.classList.add('input-error');
+                field.classList.remove('input-success');
                 return false;
-            } else if (phone.length < 10) {
-                showError(errorElement, 'Please enter a valid phone number');
+            } else if (!phoneRegex.test(numericPhone)) {
+                showError(errorElement, 'Please enter exactly 10 digits (numbers only)');
+                field.classList.add('input-error');
+                field.classList.remove('input-success');
                 return false;
             } else {
                 hideError(errorElement);
+                field.classList.remove('input-error');
+                field.classList.add('input-success');
                 return true;
             }
         }
@@ -464,23 +497,29 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
             if (password === '') {
                 showError(errorElement, 'Password is required');
                 strengthElement.textContent = '';
+                field.classList.add('input-error');
+                field.classList.remove('input-success');
                 return false;
             } else if (password.length < 8) {
                 showError(errorElement, 'Password must be at least 8 characters');
                 strengthElement.textContent = 'Weak';
                 strengthElement.className = 'password-strength strength-weak';
+                field.classList.add('input-error');
+                field.classList.remove('input-success');
                 return false;
             } else {
                 hideError(errorElement);
+                field.classList.remove('input-error');
+                field.classList.add('input-success');
                 
                 // Simple password strength check
                 let strength = 'Weak';
                 let strengthClass = 'strength-weak';
                 
-                if (password.length >= 12) {
+                if (password.length >= 12 && /[A-Z]/.test(password) && /[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password)) {
                     strength = 'Strong';
                     strengthClass = 'strength-strong';
-                } else if (password.length >= 8) {
+                } else if (password.length >= 10) {
                     strength = 'Medium';
                     strengthClass = 'strength-medium';
                 }
@@ -498,12 +537,18 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
             
             if (confirmPassword === '') {
                 showError(errorElement, 'Please confirm your password');
+                field.classList.add('input-error');
+                field.classList.remove('input-success');
                 return false;
             } else if (confirmPassword !== password) {
                 showError(errorElement, 'Passwords do not match');
+                field.classList.add('input-error');
+                field.classList.remove('input-success');
                 return false;
             } else {
                 hideError(errorElement);
+                field.classList.remove('input-error');
+                field.classList.add('input-success');
                 return true;
             }
         }
@@ -560,6 +605,19 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
                 submitButton.innerHTML = 'Creating Account...';
                 submitButton.disabled = true;
                 document.getElementById('registrationForm').classList.add('loading');
+            }
+        });
+
+        // Prevent non-numeric input in phone field
+        document.getElementById('phone').addEventListener('input', function(e) {
+            this.value = this.value.replace(/[^0-9]/g, '');
+        });
+
+        // Prevent paste of non-numeric characters in phone field
+        document.getElementById('phone').addEventListener('paste', function(e) {
+            const pasteData = e.clipboardData.getData('text');
+            if (!/^\d+$/.test(pasteData)) {
+                e.preventDefault();
             }
         });
     </script>
