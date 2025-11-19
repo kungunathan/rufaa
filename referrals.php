@@ -585,11 +585,22 @@ try {
     $users_stmt->execute([$user_id]);
     $available_users = $users_stmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Calculate stats
-    $total_referrals = count($outgoing_referrals);
-    $pending_incoming = count($incoming_referrals);
-    $accepted_referrals = array_filter($outgoing_referrals, function($ref) { return $ref['status'] === 'accepted'; });
-    $declined_referrals = array_filter($outgoing_referrals, function($ref) { return $ref['status'] === 'declined'; });
+    // Calculate stats - FIXED: Use proper database queries for accurate counts
+    $total_sent_stmt = $pdo->prepare("SELECT COUNT(*) as count FROM referrals WHERE user_id = ?");
+    $total_sent_stmt->execute([$user_id]);
+    $total_sent = $total_sent_stmt->fetch(PDO::FETCH_ASSOC)['count'];
+    
+    $accepted_stmt = $pdo->prepare("SELECT COUNT(*) as count FROM referrals WHERE user_id = ? AND status = 'accepted'");
+    $accepted_stmt->execute([$user_id]);
+    $accepted_count = $accepted_stmt->fetch(PDO::FETCH_ASSOC)['count'];
+    
+    $declined_stmt = $pdo->prepare("SELECT COUNT(*) as count FROM referrals WHERE user_id = ? AND status = 'declined'");
+    $declined_stmt->execute([$user_id]);
+    $declined_count = $declined_stmt->fetch(PDO::FETCH_ASSOC)['count'];
+    
+    $pending_incoming_stmt = $pdo->prepare("SELECT COUNT(*) as count FROM referrals WHERE receiving_user_id = ? AND status = 'pending'");
+    $pending_incoming_stmt->execute([$user_id]);
+    $pending_incoming_count = $pending_incoming_stmt->fetch(PDO::FETCH_ASSOC)['count'];
 
 } catch (PDOException $e) {
     error_log("Referrals data fetch error: " . $e->getMessage());
@@ -597,10 +608,10 @@ try {
     $incoming_referrals = [];
     $outgoing_referrals = [];
     $available_users = [];
-    $total_referrals = 0;
-    $pending_incoming = 0;
-    $accepted_referrals = [];
-    $declined_referrals = [];
+    $total_sent = 0;
+    $accepted_count = 0;
+    $declined_count = 0;
+    $pending_incoming_count = 0;
 }
 
 // Check for messages
@@ -1018,6 +1029,82 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
             margin-bottom: 0;
         }
 
+        /* Search Box Styles */
+        .search-container {
+            position: relative;
+            width: 100%;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 12px 40px 12px 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.3s ease;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .search-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #e1e5e9;
+            border-radius: 6px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .search-result-item {
+            padding: 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f1f1;
+            transition: background-color 0.2s ease;
+        }
+
+        .search-result-item:hover {
+            background-color: #f8f9fa;
+        }
+
+        .search-result-item:last-child {
+            border-bottom: none;
+        }
+
+        .user-display-name {
+            font-weight: 600;
+            color: #333;
+        }
+
+        .user-email {
+            font-size: 12px;
+            color: #666;
+            margin-top: 2px;
+        }
+
+        .selected-user {
+            margin-top: 10px;
+            padding: 10px;
+            background: #e8f5e8;
+            border: 1px solid #28a745;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .selected-user span {
+            font-weight: 600;
+            color: #155724;
+        }
+
         /* View Details */
         .view-details {
             display: none;
@@ -1274,12 +1361,12 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                 <div class="message error-message"><?php echo htmlspecialchars($error_message); ?></div>
             <?php endif; ?>
 
-            <!-- Stats Grid -->
+            <!-- Stats Grid - FIXED: Using proper database counts -->
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-header">
                         <div>
-                            <div class="stat-value"><?php echo $total_referrals; ?></div>
+                            <div class="stat-value"><?php echo $total_sent; ?></div>
                             <div class="stat-label">Total Referrals Sent</div>
                         </div>
                         <div class="stat-icon">📤</div>
@@ -1288,7 +1375,7 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                 <div class="stat-card">
                     <div class="stat-header">
                         <div>
-                            <div class="stat-value"><?php echo count($accepted_referrals); ?></div>
+                            <div class="stat-value"><?php echo $accepted_count; ?></div>
                             <div class="stat-label">Accepted</div>
                         </div>
                         <div class="stat-icon">✅</div>
@@ -1297,7 +1384,7 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                 <div class="stat-card">
                     <div class="stat-header">
                         <div>
-                            <div class="stat-value"><?php echo count($declined_referrals); ?></div>
+                            <div class="stat-value"><?php echo $declined_count; ?></div>
                             <div class="stat-label">Declined</div>
                         </div>
                         <div class="stat-icon">❌</div>
@@ -1306,7 +1393,7 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                 <div class="stat-card">
                     <div class="stat-header">
                         <div>
-                            <div class="stat-value"><?php echo $pending_incoming; ?></div>
+                            <div class="stat-value"><?php echo $pending_incoming_count; ?></div>
                             <div class="stat-label">Pending Incoming</div>
                         </div>
                         <div class="stat-icon">⏳</div>
@@ -1631,19 +1718,26 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                                         <form method="POST" id="resend-form-<?php echo $referral['id']; ?>" class="edit-form">
                                             <input type="hidden" name="resend_referral" value="1">
                                             <input type="hidden" name="original_referral_id" value="<?php echo $referral['id']; ?>">
+                                            <input type="hidden" name="new_receiving_user_id" id="new_receiving_user_id_<?php echo $referral['id']; ?>" required>
+                                            
                                             <div class="form-group">
-                                                <label>Select New Recipient *</label>
-                                                <select name="new_receiving_user_id" required>
-                                                    <option value="">Select new recipient</option>
-                                                    <?php foreach ($available_users as $user): ?>
-                                                        <option value="<?php echo $user['id']; ?>">
-                                                            <?php echo htmlspecialchars($user['first_name'] . ' ' . $user['last_name'] . ' (' . $user['email'] . ')'); ?>
-                                                        </option>
-                                                    <?php endforeach; ?>
-                                                </select>
+                                                <label>Search for New Recipient *</label>
+                                                <div class="search-container">
+                                                    <input type="text" 
+                                                           class="search-input" 
+                                                           id="user_search_<?php echo $referral['id']; ?>" 
+                                                           placeholder="Type to search for users by name or email..."
+                                                           onkeyup="searchUsers(this.value, <?php echo $referral['id']; ?>)"
+                                                           autocomplete="off">
+                                                    <div class="search-results" id="search_results_<?php echo $referral['id']; ?>"></div>
+                                                </div>
+                                                <div class="selected-user" id="selected_user_<?php echo $referral['id']; ?>">
+                                                    Selected: <span id="selected_user_name_<?php echo $referral['id']; ?>"></span>
+                                                </div>
                                             </div>
+                                            
                                             <div class="action-links">
-                                                <button type="submit" class="action-btn confirm-resend-btn">Resend Referral</button>
+                                                <button type="submit" class="action-btn confirm-resend-btn" id="resend_submit_<?php echo $referral['id']; ?>" disabled>Resend Referral</button>
                                                 <button type="button" class="action-btn" onclick="toggleForm('resend-form-<?php echo $referral['id']; ?>')">Cancel</button>
                                             </div>
                                         </form>
@@ -1669,6 +1763,70 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
     </div>
 
     <script>
+        // Available users data for search
+        const availableUsers = <?php echo json_encode($available_users); ?>;
+
+        // Search users function
+        function searchUsers(query, referralId) {
+            const resultsContainer = document.getElementById('search_results_' + referralId);
+            const selectedUserDiv = document.getElementById('selected_user_' + referralId);
+            const userIdInput = document.getElementById('new_receiving_user_id_' + referralId);
+            const submitButton = document.getElementById('resend_submit_' + referralId);
+            
+            if (query.length < 2) {
+                resultsContainer.style.display = 'none';
+                return;
+            }
+            
+            const filteredUsers = availableUsers.filter(user => {
+                const fullName = user.first_name + ' ' + user.last_name;
+                return fullName.toLowerCase().includes(query.toLowerCase()) || 
+                       user.email.toLowerCase().includes(query.toLowerCase());
+            });
+            
+            displaySearchResults(filteredUsers, referralId);
+        }
+        
+        // Display search results
+        function displaySearchResults(users, referralId) {
+            const resultsContainer = document.getElementById('search_results_' + referralId);
+            resultsContainer.innerHTML = '';
+            
+            if (users.length === 0) {
+                resultsContainer.innerHTML = '<div class="search-result-item">No users found</div>';
+            } else {
+                users.forEach(user => {
+                    const userElement = document.createElement('div');
+                    userElement.className = 'search-result-item';
+                    userElement.innerHTML = `
+                        <div class="user-display-name">${user.first_name} ${user.last_name}</div>
+                        <div class="user-email">${user.email}</div>
+                    `;
+                    userElement.onclick = () => selectUser(user, referralId);
+                    resultsContainer.appendChild(userElement);
+                });
+            }
+            
+            resultsContainer.style.display = 'block';
+        }
+        
+        // Select user from search results
+        function selectUser(user, referralId) {
+            const userIdInput = document.getElementById('new_receiving_user_id_' + referralId);
+            const selectedUserDiv = document.getElementById('selected_user_' + referralId);
+            const selectedUserName = document.getElementById('selected_user_name_' + referralId);
+            const searchInput = document.getElementById('user_search_' + referralId);
+            const resultsContainer = document.getElementById('search_results_' + referralId);
+            const submitButton = document.getElementById('resend_submit_' + referralId);
+            
+            userIdInput.value = user.id;
+            selectedUserName.textContent = `${user.first_name} ${user.last_name} (${user.email})`;
+            selectedUserDiv.style.display = 'block';
+            searchInput.value = `${user.first_name} ${user.last_name}`;
+            resultsContainer.style.display = 'none';
+            submitButton.disabled = false;
+        }
+        
         // Toggle view details
         function toggleDetails(elementId) {
             const element = document.getElementById(elementId);
@@ -1689,6 +1847,11 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
             const form = document.getElementById(formId);
             if (form.style.display === 'block') {
                 form.style.display = 'none';
+                // Reset search fields when closing
+                if (formId.includes('resend-form')) {
+                    const referralId = formId.split('_').pop();
+                    resetSearchFields(referralId);
+                }
             } else {
                 // Hide all other forms first
                 document.querySelectorAll('.edit-form').forEach(form => {
@@ -1697,6 +1860,21 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                 form.style.display = 'block';
                 form.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }
+        }
+        
+        // Reset search fields
+        function resetSearchFields(referralId) {
+            const userIdInput = document.getElementById('new_receiving_user_id_' + referralId);
+            const selectedUserDiv = document.getElementById('selected_user_' + referralId);
+            const searchInput = document.getElementById('user_search_' + referralId);
+            const resultsContainer = document.getElementById('search_results_' + referralId);
+            const submitButton = document.getElementById('resend_submit_' + referralId);
+            
+            userIdInput.value = '';
+            selectedUserDiv.style.display = 'none';
+            searchInput.value = '';
+            resultsContainer.style.display = 'none';
+            submitButton.disabled = true;
         }
 
         // Toggle custom date inputs
@@ -1721,6 +1899,15 @@ unset($_SESSION['success_message'], $_SESSION['error_message']);
                 toggleForm('resend-form-' + referralId);
             }, 300);
         }
+
+        // Close search results when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!e.target.matches('.search-input')) {
+                document.querySelectorAll('.search-results').forEach(container => {
+                    container.style.display = 'none';
+                });
+            }
+        });
 
         // Add smooth animations
         document.addEventListener('DOMContentLoaded', function() {
