@@ -90,230 +90,7 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rufaa - Register</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-
-        .register-container {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
-            padding: 40px;
-            width: 100%;
-            max-width: 500px;
-        }
-
-        .register-header {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-
-        .logo {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #667eea;
-            margin-bottom: 10px;
-        }
-
-        .register-title {
-            font-size: 1.5rem;
-            color: #333;
-            margin-bottom: 8px;
-        }
-
-        .register-subtitle {
-            color: #666;
-            font-size: 0.9rem;
-        }
-
-        .error-message {
-            background: #fee;
-            border: 1px solid #f5c6cb;
-            color: #721c24;
-            padding: 12px;
-            border-radius: 6px;
-            margin-bottom: 20px;
-            font-size: 0.9rem;
-        }
-
-        .success-message {
-            background: #e8f5e8;
-            border: 1px solid #c3e6cb;
-            color: #155724;
-            padding: 12px;
-            border-radius: 6px;
-            margin-bottom: 20px;
-            font-size: 0.9rem;
-            text-align: center;
-        }
-
-        .form-section {
-            margin-bottom: 20px;
-        }
-
-        .form-row {
-            display: flex;
-            gap: 15px;
-        }
-
-        .form-group {
-            flex: 1;
-            margin-bottom: 15px;
-        }
-
-        .form-label {
-            display: block;
-            margin-bottom: 6px;
-            font-weight: 500;
-            color: #333;
-            font-size: 0.9rem;
-        }
-
-        .form-input {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e1e5e9;
-            border-radius: 6px;
-            font-size: 0.95rem;
-            transition: all 0.3s ease;
-        }
-
-        .form-input:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }
-
-        .form-input::placeholder {
-            color: #999;
-        }
-
-        .checkbox-group {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            margin: 25px 0;
-        }
-
-        .checkbox-input {
-            margin-top: 2px;
-        }
-
-        .checkbox-label {
-            font-size: 0.9rem;
-            color: #555;
-            line-height: 1.4;
-        }
-
-        .terms-link {
-            color: #667eea;
-            text-decoration: none;
-        }
-
-        .terms-link:hover {
-            text-decoration: underline;
-        }
-
-        .create-account-button {
-            width: 100%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 14px;
-            border-radius: 6px;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .create-account-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
-
-        .create-account-button:active {
-            transform: translateY(0);
-        }
-
-        .login-section {
-            text-align: center;
-            margin-top: 25px;
-            padding-top: 20px;
-            border-top: 1px solid #e1e5e9;
-            color: #666;
-            font-size: 0.9rem;
-        }
-
-        .login-link {
-            color: #667eea;
-            text-decoration: none;
-            font-weight: 500;
-        }
-
-        .login-link:hover {
-            text-decoration: underline;
-        }
-
-        /* Responsive Design */
-        @media (max-width: 600px) {
-            .register-container {
-                padding: 30px 20px;
-                margin: 10px;
-            }
-
-            .form-row {
-                flex-direction: column;
-                gap: 0;
-            }
-
-            .logo {
-                font-size: 1.8rem;
-            }
-
-            .register-title {
-                font-size: 1.3rem;
-            }
-        }
-
-        /* Password strength indicator */
-        .password-strength {
-            margin-top: 5px;
-            font-size: 0.8rem;
-        }
-
-        .strength-weak { color: #e74c3c; }
-        .strength-medium { color: #f39c12; }
-        .strength-strong { color: #27ae60; }
-
-        /* Loading state */
-        .loading {
-            opacity: 0.7;
-            pointer-events: none;
-        }
-
-        /* Input validation states */
-        .input-error {
-            border-color: #e74c3c !important;
-        }
-
-        .input-success {
-            border-color: #27ae60 !important;
-        }
-    </style>
+    <link rel="stylesheet" href="css/signup.css">
 </head>
 <body>
     <div class="register-container">
@@ -345,7 +122,7 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
                                value="<?php echo htmlspecialchars($firstName); ?>" 
                                required
                                oninput="validateField(this)">
-                        <div class="field-error" style="color: #e74c3c; font-size: 0.8rem; margin-top: 5px; display: none;"></div>
+                        <div class="field-error"></div>
                     </div>
                     <div class="form-group">
                         <label class="form-label" for="lastName">Last Name *</label>
@@ -354,7 +131,7 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
                                value="<?php echo htmlspecialchars($lastName); ?>" 
                                required
                                oninput="validateField(this)">
-                        <div class="field-error" style="color: #e74c3c; font-size: 0.8rem; margin-top: 5px; display: none;"></div>
+                        <div class="field-error"></div>
                     </div>
                 </div>
             </div>
@@ -368,7 +145,7 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
                                value="<?php echo htmlspecialchars($email); ?>" 
                                required
                                oninput="validateEmail(this)">
-                        <div class="field-error" style="color: #e74c3c; font-size: 0.8rem; margin-top: 5px; display: none;"></div>
+                        <div class="field-error"></div>
                     </div>
                     <div class="form-group">
                         <label class="form-label" for="phone">Phone Number *</label>
@@ -378,7 +155,7 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
                                required
                                maxlength="10"
                                oninput="validatePhone(this)">
-                        <div class="field-error" style="color: #e74c3c; font-size: 0.8rem; margin-top: 5px; display: none;"></div>
+                        <div class="field-error"></div>
                     </div>
                 </div>
             </div>
@@ -392,7 +169,7 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
                                required
                                oninput="validatePassword(this)">
                         <div class="password-strength"></div>
-                        <div class="field-error" style="color: #e74c3c; font-size: 0.8rem; margin-top: 5px; display: none;"></div>
+                        <div class="field-error"></div>
                     </div>
                     <div class="form-group">
                         <label class="form-label" for="confirmPassword">Confirm Password *</label>
@@ -400,7 +177,7 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
                                placeholder="Confirm your password" 
                                required
                                oninput="validateConfirmPassword(this)">
-                        <div class="field-error" style="color: #e74c3c; font-size: 0.8rem; margin-top: 5px; display: none;"></div>
+                        <div class="field-error"></div>
                     </div>
                 </div>
             </div>
@@ -422,204 +199,6 @@ if (isset($_SESSION['logged_in']) && $_SESSION['logged_in'] === true) {
             Already have an account? <a href="login.php" class="login-link">Log in</a>
         </div>
     </div>
-
-    <script>
-        function validateField(field) {
-            const errorElement = field.parentElement.querySelector('.field-error');
-            if (field.value.trim() === '') {
-                showError(errorElement, 'This field is required');
-                field.classList.add('input-error');
-                field.classList.remove('input-success');
-                return false;
-            } else {
-                hideError(errorElement);
-                field.classList.remove('input-error');
-                field.classList.add('input-success');
-                return true;
-            }
-        }
-
-        function validateEmail(field) {
-            const errorElement = field.parentElement.querySelector('.field-error');
-            const email = field.value.trim();
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            
-            if (email === '') {
-                showError(errorElement, 'Email is required');
-                field.classList.add('input-error');
-                field.classList.remove('input-success');
-                return false;
-            } else if (!emailRegex.test(email)) {
-                showError(errorElement, 'Please enter a valid email address (e.g., name@example.com)');
-                field.classList.add('input-error');
-                field.classList.remove('input-success');
-                return false;
-            } else {
-                hideError(errorElement);
-                field.classList.remove('input-error');
-                field.classList.add('input-success');
-                return true;
-            }
-        }
-
-        function validatePhone(field) {
-            const errorElement = field.parentElement.querySelector('.field-error');
-            const phone = field.value.trim();
-            const phoneRegex = /^[0-9]{10}$/;
-            
-            // Remove any non-numeric characters
-            const numericPhone = phone.replace(/[^0-9]/g, '');
-            field.value = numericPhone; // Update field with only numbers
-            
-            if (numericPhone === '') {
-                showError(errorElement, 'Phone number is required');
-                field.classList.add('input-error');
-                field.classList.remove('input-success');
-                return false;
-            } else if (!phoneRegex.test(numericPhone)) {
-                showError(errorElement, 'Please enter exactly 10 digits (numbers only)');
-                field.classList.add('input-error');
-                field.classList.remove('input-success');
-                return false;
-            } else {
-                hideError(errorElement);
-                field.classList.remove('input-error');
-                field.classList.add('input-success');
-                return true;
-            }
-        }
-
-        function validatePassword(field) {
-            const errorElement = field.parentElement.querySelector('.field-error');
-            const strengthElement = field.parentElement.querySelector('.password-strength');
-            const password = field.value;
-            
-            if (password === '') {
-                showError(errorElement, 'Password is required');
-                strengthElement.textContent = '';
-                field.classList.add('input-error');
-                field.classList.remove('input-success');
-                return false;
-            } else if (password.length < 8) {
-                showError(errorElement, 'Password must be at least 8 characters');
-                strengthElement.textContent = 'Weak';
-                strengthElement.className = 'password-strength strength-weak';
-                field.classList.add('input-error');
-                field.classList.remove('input-success');
-                return false;
-            } else {
-                hideError(errorElement);
-                field.classList.remove('input-error');
-                field.classList.add('input-success');
-                
-                // Simple password strength check
-                let strength = 'Weak';
-                let strengthClass = 'strength-weak';
-                
-                if (password.length >= 12 && /[A-Z]/.test(password) && /[0-9]/.test(password) && /[^A-Za-z0-9]/.test(password)) {
-                    strength = 'Strong';
-                    strengthClass = 'strength-strong';
-                } else if (password.length >= 10) {
-                    strength = 'Medium';
-                    strengthClass = 'strength-medium';
-                }
-                
-                strengthElement.textContent = strength;
-                strengthElement.className = 'password-strength ' + strengthClass;
-                return true;
-            }
-        }
-
-        function validateConfirmPassword(field) {
-            const errorElement = field.parentElement.querySelector('.field-error');
-            const confirmPassword = field.value;
-            const password = document.getElementById('password').value;
-            
-            if (confirmPassword === '') {
-                showError(errorElement, 'Please confirm your password');
-                field.classList.add('input-error');
-                field.classList.remove('input-success');
-                return false;
-            } else if (confirmPassword !== password) {
-                showError(errorElement, 'Passwords do not match');
-                field.classList.add('input-error');
-                field.classList.remove('input-success');
-                return false;
-            } else {
-                hideError(errorElement);
-                field.classList.remove('input-error');
-                field.classList.add('input-success');
-                return true;
-            }
-        }
-
-        function showError(errorElement, message) {
-            errorElement.textContent = message;
-            errorElement.style.display = 'block';
-        }
-
-        function hideError(errorElement) {
-            errorElement.style.display = 'none';
-        }
-
-        // Form submission validation
-        document.getElementById('registrationForm').addEventListener('submit', function(e) {
-            let isValid = true;
-            
-            // Validate all fields
-            isValid = validateField(document.getElementById('firstName')) && isValid;
-            isValid = validateField(document.getElementById('lastName')) && isValid;
-            isValid = validateEmail(document.getElementById('email')) && isValid;
-            isValid = validatePhone(document.getElementById('phone')) && isValid;
-            isValid = validatePassword(document.getElementById('password')) && isValid;
-            isValid = validateConfirmPassword(document.getElementById('confirmPassword')) && isValid;
-            
-            // Validate terms
-            const termsCheckbox = document.getElementById('terms');
-            const termsError = termsCheckbox.parentElement.querySelector('.field-error') || 
-                             (function() {
-                                 const errorDiv = document.createElement('div');
-                                 errorDiv.className = 'field-error';
-                                 errorDiv.style.cssText = 'color: #e74c3c; font-size: 0.8rem; margin-top: 5px;';
-                                 termsCheckbox.parentElement.appendChild(errorDiv);
-                                 return errorDiv;
-                             })();
-            
-            if (!termsCheckbox.checked) {
-                showError(termsError, 'You must agree to the terms and privacy policy');
-                isValid = false;
-            } else {
-                hideError(termsError);
-            }
-            
-            if (!isValid) {
-                e.preventDefault();
-                // Scroll to first error
-                const firstError = document.querySelector('.field-error[style="display: block;"]');
-                if (firstError) {
-                    firstError.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-            } else {
-                // Show loading state
-                const submitButton = document.getElementById('submitButton');
-                submitButton.innerHTML = 'Creating Account...';
-                submitButton.disabled = true;
-                document.getElementById('registrationForm').classList.add('loading');
-            }
-        });
-
-        // Prevent non-numeric input in phone field
-        document.getElementById('phone').addEventListener('input', function(e) {
-            this.value = this.value.replace(/[^0-9]/g, '');
-        });
-
-        // Prevent paste of non-numeric characters in phone field
-        document.getElementById('phone').addEventListener('paste', function(e) {
-            const pasteData = e.clipboardData.getData('text');
-            if (!/^\d+$/.test(pasteData)) {
-                e.preventDefault();
-            }
-        });
-    </script>
+    <script src="js/signup.js"></script>
 </body>
 </html>
