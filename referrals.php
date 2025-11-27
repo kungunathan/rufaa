@@ -211,64 +211,88 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             // Fetch comprehensive report data
             $report_data = [];
             
-            // User referral activity (both sent and received)
-            $activity_stmt = $pdo->prepare("
-                SELECT 
-                    'outgoing' as type,
-                    r.referral_code,
-                    r.patient_name,
-                    r.condition_description,
-                    r.status,
-                    r.urgency_level,
-                    r.created_at,
-                    CONCAT(u.first_name, ' ', u.last_name) as related_user_name,
-                    r.feedback,
-                    r.responded_at
-                FROM referrals r 
-                JOIN users u ON r.receiving_user_id = u.id 
-                WHERE r.user_id = ? $date_conditions
-                
-                UNION ALL
-                
-                SELECT 
-                    'incoming' as type,
-                    r.referral_code,
-                    r.patient_name,
-                    r.condition_description,
-                    r.status,
-                    r.urgency_level,
-                    r.created_at,
-                    CONCAT(u.first_name, ' ', u.last_name) as related_user_name,
-                    r.feedback,
-                    r.responded_at
-                FROM referrals r 
-                JOIN users u ON r.user_id = u.id 
-                WHERE r.receiving_user_id = ? $date_conditions
-                ORDER BY created_at DESC
-            ");
+            // User referral activity (both sent and received) - FIXED
+$activity_query = "
+    SELECT 
+        'outgoing' as type,
+        r.referral_code,
+        r.patient_name,
+        r.condition_description,
+        r.status,
+        r.urgency_level,
+        r.created_at,
+        CONCAT(u.first_name, ' ', u.last_name) as related_user_name,
+        r.feedback,
+        r.responded_at
+    FROM referrals r 
+    JOIN users u ON r.receiving_user_id = u.id 
+    WHERE r.user_id = ? 
+    
+    UNION ALL
+    
+    SELECT 
+        'incoming' as type,
+        r.referral_code,
+        r.patient_name,
+        r.condition_description,
+        r.status,
+        r.urgency_level,
+        r.created_at,
+        CONCAT(u.first_name, ' ', u.last_name) as related_user_name,
+        r.feedback,
+        r.responded_at
+    FROM referrals r 
+    JOIN users u ON r.user_id = u.id 
+    WHERE r.receiving_user_id = ? 
+    ORDER BY created_at DESC
+";
+
+$activity_stmt = $pdo->prepare($activity_query);
+$activity_stmt->execute([$user_id, $user_id]);
+$report_data['referral_activity'] = $activity_stmt->fetchAll(PDO::FETCH_ASSOC);
             
-            $activity_stmt->execute($params);
-            $report_data['referral_activity'] = $activity_stmt->fetchAll(PDO::FETCH_ASSOC);
-            
-            // Summary statistics
-            $summary_stmt = $pdo->prepare("
-                SELECT 
-                    COUNT(*) as total_referrals,
-                    SUM(CASE WHEN r.status = 'accepted' THEN 1 ELSE 0 END) as accepted,
-                    SUM(CASE WHEN r.status = 'declined' THEN 1 ELSE 0 END) as declined,
-                    SUM(CASE WHEN r.status = 'pending' THEN 1 ELSE 0 END) as pending,
-                    SUM(CASE WHEN r.urgency_level = 'emergency' THEN 1 ELSE 0 END) as emergency,
-                    SUM(CASE WHEN r.urgency_level = 'urgent' THEN 1 ELSE 0 END) as urgent,
-                    SUM(CASE WHEN r.urgency_level = 'routine' THEN 1 ELSE 0 END) as routine,
-                    SUM(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as sent_count,
-                    SUM(CASE WHEN r.receiving_user_id = ? THEN 1 ELSE 0 END) as received_count
-                FROM referrals r
-                WHERE (r.user_id = ? OR r.receiving_user_id = ?) $date_conditions
-            ");
-            
-            $summary_params = array_merge([$user_id, $user_id, $user_id, $user_id], array_slice($params, 2));
-            $summary_stmt->execute($summary_params);
-            $report_data['summary'] = $summary_stmt->fetch(PDO::FETCH_ASSOC);
+           // Summary statistics - FIXED VERSION
+$summary_query = "
+    SELECT 
+        COUNT(*) as total_referrals,
+        SUM(CASE WHEN r.status = 'accepted' THEN 1 ELSE 0 END) as accepted,
+        SUM(CASE WHEN r.status = 'declined' THEN 1 ELSE 0 END) as declined,
+        SUM(CASE WHEN r.status = 'pending' THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN r.urgency_level = 'emergency' THEN 1 ELSE 0 END) as emergency,
+        SUM(CASE WHEN r.urgency_level = 'urgent' THEN 1 ELSE 0 END) as urgent,
+        SUM(CASE WHEN r.urgency_level = 'routine' THEN 1 ELSE 0 END) as routine,
+        SUM(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as sent_count,
+        SUM(CASE WHEN r.receiving_user_id = ? THEN 1 ELSE 0 END) as received_count
+    FROM referrals r
+    WHERE (r.user_id = ? OR r.receiving_user_id = ?) 
+";
+
+        // Add date conditions and build parameters
+        $summary_params = [$user_id, $user_id, $user_id, $user_id];
+
+        if ($date_range === 'custom' && $start_date && $end_date) {
+            $summary_query .= " AND DATE(r.created_at) BETWEEN ? AND ?";
+            $summary_params[] = $start_date;
+            $summary_params[] = $end_date;
+        } else {
+            switch ($date_range) {
+                case 'last_week':
+                    $summary_query .= " AND r.created_at >= DATE_SUB(NOW(), INTERVAL 1 WEEK)";
+                    break;
+                case 'last_month':
+                    $summary_query .= " AND r.created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)";
+                    break;
+                case 'last_quarter':
+                    $summary_query .= " AND r.created_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)";
+                    break;
+                // 'all_time' has no additional conditions
+            }
+        }
+
+        $summary_stmt = $pdo->prepare($summary_query);
+        $summary_stmt->execute($summary_params);
+        $summary_data = $summary_stmt->fetch(PDO::FETCH_ASSOC);
+        $report_data['summary'] = $summary_data;
             
             // Generate PDF using DomPDF
             // Configure DomPDF options
