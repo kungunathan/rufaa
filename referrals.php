@@ -188,25 +188,25 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $date_conditions = "";
             $params = [$user_id, $user_id]; // For both user_id and receiving_user_id
             
-            switch ($date_range) {
-                case 'last_week':
-                    $date_conditions = " AND r.created_at >= DATE_SUB(NOW(), INTERVAL 1 WEEK)";
-                    break;
-                case 'last_month':
-                    $date_conditions = " AND r.created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)";
-                    break;
-                case 'last_quarter':
-                    $date_conditions = " AND r.created_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)";
-                    break;
-                case 'custom':
-                    if ($start_date && $end_date) {
-                        $date_conditions = " AND DATE(r.created_at) BETWEEN ? AND ?";
-                        $params[] = $start_date;
-                        $params[] = $end_date;
-                    }
-                    break;
-                // 'all_time' has no date conditions
+             switch ($date_range) {
+        case 'last_week':
+            $date_conditions = " AND r.created_at >= DATE_SUB(NOW(), INTERVAL 1 WEEK)";
+            break;
+        case 'last_month':
+            $date_conditions = " AND r.created_at >= DATE_SUB(NOW(), INTERVAL 1 MONTH)";
+            break;
+        case 'last_quarter':
+            $date_conditions = " AND r.created_at >= DATE_SUB(NOW(), INTERVAL 3 MONTH)";
+            break;
+        case 'custom':
+            if ($start_date && $end_date) {
+                $date_conditions = " AND DATE(r.created_at) BETWEEN ? AND ?";
+                $params[] = $start_date;
+                $params[] = $end_date;
             }
+            break;
+        // 'all_time' has no date conditions
+    }
             
             // Fetch comprehensive report data
             $report_data = [];
@@ -254,16 +254,16 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
             $summary_stmt = $pdo->prepare("
                 SELECT 
                     COUNT(*) as total_referrals,
-                    SUM(CASE WHEN status = 'accepted' THEN 1 ELSE 0 END) as accepted,
-                    SUM(CASE WHEN status = 'declined' THEN 1 ELSE 0 END) as declined,
-                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending,
-                    SUM(CASE WHEN urgency_level = 'emergency' THEN 1 ELSE 0 END) as emergency,
-                    SUM(CASE WHEN urgency_level = 'urgent' THEN 1 ELSE 0 END) as urgent,
-                    SUM(CASE WHEN urgency_level = 'routine' THEN 1 ELSE 0 END) as routine,
-                    SUM(CASE WHEN user_id = ? THEN 1 ELSE 0 END) as sent_count,
-                    SUM(CASE WHEN receiving_user_id = ? THEN 1 ELSE 0 END) as received_count
-                FROM referrals 
-                WHERE (user_id = ? OR receiving_user_id = ?) $date_conditions
+                    SUM(CASE WHEN r.status = 'accepted' THEN 1 ELSE 0 END) as accepted,
+                    SUM(CASE WHEN r.status = 'declined' THEN 1 ELSE 0 END) as declined,
+                    SUM(CASE WHEN r.status = 'pending' THEN 1 ELSE 0 END) as pending,
+                    SUM(CASE WHEN r.urgency_level = 'emergency' THEN 1 ELSE 0 END) as emergency,
+                    SUM(CASE WHEN r.urgency_level = 'urgent' THEN 1 ELSE 0 END) as urgent,
+                    SUM(CASE WHEN r.urgency_level = 'routine' THEN 1 ELSE 0 END) as routine,
+                    SUM(CASE WHEN r.user_id = ? THEN 1 ELSE 0 END) as sent_count,
+                    SUM(CASE WHEN r.receiving_user_id = ? THEN 1 ELSE 0 END) as received_count
+                FROM referrals r
+                WHERE (r.user_id = ? OR r.receiving_user_id = ?) $date_conditions
             ");
             
             $summary_params = array_merge([$user_id, $user_id, $user_id, $user_id], array_slice($params, 2));
